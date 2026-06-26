@@ -10,6 +10,11 @@ Alternatively, you may install the C++ engine directly on your bare-metal machin
 
 I personally ran into an issue on my local installation on macOS where I could not run the simulations. Instead of running `python` normally, I had to pass the flag `python -O` to ignore asserts. I could never quite figure out which assert was failing, since it is internal to the OpenEMS engine and the eror reporting gives no useful information.
 
+### Dev
+
+If you are actually developing code... possibly modifying helper functions and so on, you may want to install the `requirements-dev.txt` instead and run tests with: `python -m pytest`
+
+
 ---
 
 ### Path A: The Docker Method (Recommended - 100% CI Parity)

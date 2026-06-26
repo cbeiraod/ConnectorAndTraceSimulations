@@ -1,0 +1,49 @@
+name: Python Unit Tests
+
+# Run this workflow on all pushes and pull requests to the main branch
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'tests/*'
+      - 'rf_sim/helper.py'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'tests/*'
+      - 'rf_sim/*'
+      - '.github/workflows/tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Test against multiple recent Python versions
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+        # Cache pip dependencies to speed up future runs
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+
+    - name: Run tests with Pytest
+      # We set PYTHONPATH to the current directory so that 'import rf_sim.helper'
+      # resolves correctly without needing to formally install the package via setup.py
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+      run: |
+        pytest tests/ -v
