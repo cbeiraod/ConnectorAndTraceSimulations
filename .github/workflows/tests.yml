@@ -18,30 +18,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # Test against multiple recent Python versions
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
     container:
-      # This pulls the image you will eventually publish
-      image: ghcr.io/cbeiraod/openems-docker-env:latest
+      # Dynamically pull the exact image version we built for this matrix job
+      image: ghcr.io/cbeiraod/openems-docker-env:${{ matrix.python-version }}
 
     # Map the container's working directory to the GitHub workspace
     defaults:
       run:
         working-directory: ${{ github.workspace }}
 
-    # Test against multiple recent Python versions
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
-      with:
-        python-version: ${{ matrix.python-version }}
-        # Cache pip dependencies to speed up future runs
-        cache: 'pip'
 
     - name: Install dependencies
       run: |
@@ -54,4 +49,4 @@ jobs:
       env:
         PYTHONPATH: ${{ github.workspace }}
       run: |
-        pytest tests/ -v
+        python -m pytest tests/ -v
