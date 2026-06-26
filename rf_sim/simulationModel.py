@@ -34,7 +34,7 @@ class SimulationModel:
         self._ports_setup = False
         self._mesh_built = False
 
-        # Critical Rule 1: Enforce mm units
+        # Enforce units
         self.mesh = self.CSX.GetGrid()
         self.mesh.SetDeltaUnit(self.unit)
 
