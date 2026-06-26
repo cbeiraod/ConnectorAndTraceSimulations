@@ -1,4 +1,6 @@
 import pytest
+import random
+import sys
 from rf_sim.helper import generate_fdtd_mesh_1d
 
 def validate_mesh_constraints(mesh, fixed_points, max_res, ratio):
@@ -171,3 +173,39 @@ def test_openems_native_mesher_fails_constraints():
     # (usually a grading ratio violation when cascading across highly variable gaps).
     with pytest.raises(AssertionError):
         validate_mesh_constraints(openems_mesh, fixed, max_res=1.7472369284948892, ratio=1.2)
+
+def test_fuzz_mesh_generation():
+    """
+    Fuzz testing: Throws completely random FDTD geometries at the algorithm
+    hundreds of times to ensure it always converges and meets constraints without
+    triggering the RuntimeError circuit breaker.
+    """
+    # Use a random seed and report it so if it fails, it is reproducible for testing on the same random geometry,
+    # allowing to debug exactly what caused the failure.
+    seed = random.randint(1, sys.maxsize)
+    random.seed(seed)
+
+    for it in range(500):  # Run 500 completely random scenarios
+        num_fixed = random.randint(2, 15)
+        # Generate random fixed points spread across a wide domain
+        fixed = sorted(list(set([random.uniform(-50.0, 50.0) for _ in range(num_fixed)])))
+
+        # Sometimes provide no optional points, sometimes provide many
+        optional = [random.uniform(-50.0, 50.0) for _ in range(random.randint(0, 30))]
+
+        # Randomize the FDTD strict constraints
+        max_res = random.uniform(0.1, 5.0)
+        ratio = random.uniform(1.05, 1.8)  # Ratios from very strict (1.05) to very loose (1.8)
+
+        try:
+            # If the algorithm hits an infinite loop, our circuit breaker will raise a RuntimeError,
+            # causing the test to fail.
+            mesh = generate_fdtd_mesh_1d(fixed, optional, max_res, ratio)
+
+            # Validate that the resulting mesh mathematically satisfies all rules
+            validate_mesh_constraints(mesh, fixed, max_res, ratio)
+
+        except Exception as e:
+            # If it fails, print the exact parameters that caused the failure so you can debug it
+            pytest.fail(f"Fuzz test failed (iteration {it})!\nSeed: {seed}\nFixed: {fixed}\nOptional: {optional}\n"
+                        f"Max Res: {max_res}\nRatio: {ratio}\nError: {str(e)}")
