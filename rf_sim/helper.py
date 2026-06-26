@@ -1,4 +1,5 @@
 from typing import List
+import math
 import time
 
 def generate_fdtd_mesh_1d(
@@ -138,6 +139,48 @@ def generate_fdtd_mesh_1d(
         new_points = []
         opts_to_remove = []
 
+        def safe_split(idx: int, target_step_L: float, target_step_R: float = None):
+            """
+            Divides a gap into N equal segments so no segment exceeds the target step.
+            This prevents backward ratio cascades that cause micro-segmentation loops.
+            """
+            L_cell = dx[idx]
+            left_b = mesh[idx]
+            right_b = mesh[idx+1]
+
+            target = target_step_L
+            if target_step_R is not None:
+                target = min(target_step_L, target_step_R)
+
+            N = math.ceil(L_cell / target)
+            if N <= 1: N = 2 # Safety fallback
+
+            pts = []
+            u_opts = []
+            ideal_segment = L_cell / N
+            # Calculate a mathematically safe snap deviation to prevent internal ratio breakage
+            safe_deviation_fraction = ((ratio - 1.0) / (ratio + 1.0)) * 0.9
+
+            for k in range(1, N):
+                ideal_pt = left_b + k * ideal_segment
+                best_opt = None
+                best_diff = ideal_segment * safe_deviation_fraction
+
+                for p_opt in optional:
+                    if left_b < p_opt < right_b:
+                        diff = abs(p_opt - ideal_pt)
+                        if diff < best_diff:
+                            best_diff = diff
+                            best_opt = p_opt
+
+                if best_opt is not None:
+                    pts.append(best_opt)
+                    u_opts.append(best_opt)
+                else:
+                    pts.append(ideal_pt)
+
+            return pts, u_opts
+
         # Execute splits
         for i, actions in cell_actions.items():
             L = dx[i]
@@ -157,7 +200,7 @@ def generate_fdtd_mesh_1d(
 
             # Attempt to snap to optional points
             p_L, p_R = None, None
-            final_step_L, final_step_R = 0, 0
+            final_step_L, final_step_R = 0.0, 0.0
             opt_pt_L, opt_pt_R = None, None
 
             if step_L is not None:
@@ -182,16 +225,16 @@ def generate_fdtd_mesh_1d(
                 # Coming from both sides (closing the gap)
                 if p_L >= p_R - 1e-9:
                     # Steps cross, safely bisect to close the gap cleanly
-                    pt, u_opt = smart_bisect(i)
-                    final_new_pts.append(pt)
-                    if u_opt: used_opts_this_cell.append(u_opt)
+                    pts, u_opts = safe_split(i, step_L, step_R)
+                    final_new_pts.extend(pts)
+                    used_opts_this_cell.extend(u_opts)
                 else:
                     mid_gap = p_R - p_L
                     # Prevent creating a tiny middle sliver that would cascade points later
                     if mid_gap < final_step_L / ratio - 1e-9 or mid_gap < final_step_R / ratio - 1e-9:
-                        pt, u_opt = smart_bisect(i)
-                        final_new_pts.append(pt)
-                        if u_opt: used_opts_this_cell.append(u_opt)
+                        pts, u_opts = safe_split(i, step_L, step_R)
+                        final_new_pts.extend(pts)
+                        used_opts_this_cell.extend(u_opts)
                     else:
                         final_new_pts.extend([p_L, p_R])
                         if opt_pt_L: used_opts_this_cell.append(opt_pt_L)
@@ -201,9 +244,9 @@ def generate_fdtd_mesh_1d(
                 # Radiating left-to-right
                 if L - final_step_L < final_step_L / ratio - 1e-9:
                     # Bisect instead to avoid sliver
-                    pt, u_opt = smart_bisect(i)
-                    final_new_pts.append(pt)
-                    if u_opt: used_opts_this_cell.append(u_opt)
+                    pts, u_opts = safe_split(i, step_L)
+                    final_new_pts.extend(pts)
+                    used_opts_this_cell.extend(u_opts)
                 else:
                     final_new_pts.append(p_L)
                     if opt_pt_L: used_opts_this_cell.append(opt_pt_L)
@@ -212,9 +255,9 @@ def generate_fdtd_mesh_1d(
                 # Radiating right-to-left
                 if L - final_step_R < final_step_R / ratio - 1e-9:
                     # Bisect instead to avoid sliver
-                    pt, u_opt = smart_bisect(i)
-                    final_new_pts.append(pt)
-                    if u_opt: used_opts_this_cell.append(u_opt)
+                    pts, u_opts = safe_split(i, step_R)
+                    final_new_pts.extend(pts)
+                    used_opts_this_cell.extend(u_opts)
                 else:
                     final_new_pts.append(p_R)
                     if opt_pt_R: used_opts_this_cell.append(opt_pt_R)
