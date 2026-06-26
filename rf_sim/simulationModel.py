@@ -1,0 +1,163 @@
+import os
+import numpy as np
+import logging
+from CSXCAD import ContinuousStructure
+from openEMS import openEMS
+
+logger = logging.getLogger(__name__)
+
+class SimulationModel:
+    """
+    Abstract Base Class for OpenEMS simulations.
+    Handles engine initialization, mesh state tracking, and execution boilerplate.
+    """
+    def __init__(self, unit=1e-3, f_0=2.0e9, f_max=4.0e9, nr_ts=50000, end_criteria=1e-4):
+        self.unit = unit
+        self.f_0 = f_0
+        self.f_max = f_max
+
+        # Engine State
+        self.FDTD = openEMS(NrTS=nr_ts, EndCriteria=end_criteria)
+        self.FDTD.SetGaussExcite(f_0, f_max)
+        self.CSX = ContinuousStructure()
+        self.FDTD.SetCSX(self.CSX)
+
+        # Data State
+        self.materials = {}
+        self.mesh_lines = {'x': [], 'y': [], 'z': []}
+        self.ports = []
+
+        # Execution State Trackers
+        self._boundaries_set = False
+        self._materials_added = False
+        self._geometry_built = False
+        self._ports_setup = False
+        self._mesh_built = False
+
+        # Critical Rule 1: Enforce mm units
+        self.mesh = self.CSX.GetGrid()
+        self.mesh.SetDeltaUnit(self.unit)
+
+        #self._apply_wrapper_workaround()
+
+    #def _apply_wrapper_workaround(self):
+    #    """
+    #    WORKAROUND for openEMS Python Wrapper Issue #113.
+    #    The wrapper asserts the existence of a property explicitly named 'Excitation'.
+    #    """
+    #    self.CSX.AddExcitation('Excitation', exc_type=0, exc_val=[0, 0, 0])
+
+    def set_boundary_conditions(self, cond_list):
+        """E.g. ['MUR', 'MUR', 'MUR', 'MUR', 'PEC', 'MUR']"""
+        self.FDTD.SetBoundaryCond(cond_list)
+        self._boundaries_set = True
+
+    def add_material(self, name, **kwargs):
+        """Creates and stores a CSXCAD material."""
+        if name == "Copper":
+            self.materials[name] = self.CSX.AddMetal('Copper')
+        elif name == "PEC":
+            self.materials[name] = self.CSX.AddMetal('PEC')
+        else:
+            self.materials[name] = self.CSX.AddMaterial(name, **kwargs)
+
+        self._materials_added = True
+        return self.materials[name]
+
+    def add_mesh_lines(self, axis, lines):
+        """
+        Stores critical coordinates to guarantee they are locked into the grid.
+        """
+        if isinstance(lines, (int, float)):
+            lines = [lines]
+        elif isinstance(lines, np.ndarray):
+            lines = lines.tolist()
+        self.mesh_lines[axis].extend(lines)
+
+    def add_mesh_region(self, axis, start, stop, step):
+        """
+        Generates a uniform mesh region and locks the coordinates.
+        Useful for forcing a high-resolution grid around complex structures (like connectors).
+        """
+        # np.arange with step/2 ensures the 'stop' coordinate is included if perfectly aligned
+        region_lines = np.arange(start, stop + step/2, step).tolist()
+        self.mesh_lines[axis].extend(region_lines)
+
+    def build_graded_mesh(self, max_res_x=None, max_res_y=None, max_res_z=None, ratio=1.2):
+        """
+        Applies stored exact lines to the grid.
+        If max_res parameters are provided, smoothly fills the remaining space.
+        """
+        for axis in ['x', 'y', 'z']:
+            # Deduplicate and sort locked coordinates
+            unique_lines = np.unique(self.mesh_lines[axis]).tolist()
+            if unique_lines:
+                self.mesh.AddLine(axis, unique_lines)
+
+        if max_res_x: self.mesh.SmoothMeshLines('x', max_res_x, ratio=ratio)
+        if max_res_y: self.mesh.SmoothMeshLines('y', max_res_y, ratio=ratio)
+        if max_res_z: self.mesh.SmoothMeshLines('z', max_res_z, ratio=ratio)
+
+        self._mesh_built = True
+        logger.debug(f"Applied mesh -> Smooth X:{max_res_x}, Y:{max_res_y}, Z:{max_res_z} mm")
+
+    def run_simulation(self, sim_dir="Sim_Data", show_gui=False, cleanup=True):
+        """Writes the XML, optionally shows GUI, and runs the FDTD engine."""
+        # Enforce execution order to prevent C++ Engine crashes
+        if not self._boundaries_set:
+            raise RuntimeError("Simulation cannot start: Boundary conditions have not been set.")
+        if not self._materials_added:
+            raise RuntimeError("Simulation cannot start: No materials have been added.")
+        if not self._geometry_built:
+            raise RuntimeError("Simulation cannot start: Geometry has not been built. (Ensure self._geometry_built = True is set in your subclass)")
+        if not self._ports_setup:
+            raise RuntimeError("Simulation cannot start: Ports have not been configured. (Ensure self._ports_setup = True is set in your subclass)")
+        if not self._mesh_built:
+            raise RuntimeError("Simulation cannot start: The mesh has not been generated. Please call build_graded_mesh() first.")
+
+        os.makedirs(sim_dir, exist_ok=True)
+        csx_file = os.path.join(sim_dir, 'model.xml')
+        self.CSX.Write2XML(csx_file)
+
+        if show_gui:
+            logger.info("Launching AppCSXCAD... Close the GUI to start the simulation.")
+            os.system(f'AppCSXCAD "{csx_file}"')
+
+        logger.info(f"--- Running OpenEMS Simulation in {sim_dir} ---")
+
+        abs_sim_dir = os.path.abspath(sim_dir)
+
+        original_cwd = os.getcwd()
+        try:
+            self.FDTD.Run(abs_sim_dir, cleanup=cleanup)
+        finally:
+            os.chdir(original_cwd)
+
+    def calc_all_ports(self, sim_dir="Sim_Data", f_min=100e6, f_max=1e9, f_steps=100, ref_impedance=50.0):
+        """
+        Calculates port data for all registered ports over the given frequency array.
+        Returns a dictionary mapping port numbers to their raw complex data arrays.
+        Subclasses should use this raw data to calculate specific S-parameters or Z_in.
+        """
+        freqs = np.linspace(f_min, f_max, f_steps)
+
+        port_data = {}
+
+        abs_sim_dir = os.path.abspath(sim_dir)
+
+        for idx, port in enumerate(self.ports):
+            # CalcPort populates the port object with complex numpy arrays
+            port.CalcPort(abs_sim_dir, freqs, ref_impedance=ref_impedance)
+
+            p_nr = getattr(port, 'port_nr', idx + 1)
+
+            # Note: port.port_nr is typically 1-indexed in OpenEMS
+            port_data[p_nr] = {
+                "uf_inc": port.uf_inc, # Incident Voltage
+                "uf_ref": port.uf_ref, # Reflected Voltage
+                "uf_tot": port.uf_tot, # Total Voltage
+                "if_tot": port.if_tot, # Total Current
+                "p_inc": port.P_inc,   # Incident Power
+                "p_acc": port.P_acc    # Accepted Power
+            }
+        return freqs, port_data

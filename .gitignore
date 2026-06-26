@@ -1,0 +1,20 @@
+# Python typicals
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# OpenEMS specific output dumps
+*.h5
+*.xml
+*.vtk
+*.vtp
+Sim_Path/
+*_results/
+Optuna_Sim_Path/
+
+# SQLite databases (if you decide to save Optuna state locally)
+*.db
+*.sqlite3
