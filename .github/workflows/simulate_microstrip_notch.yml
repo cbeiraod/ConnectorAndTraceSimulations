@@ -1,0 +1,43 @@
+name: OpenEMS Trace Optimization CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'simulate_microstrip_notch'
+      - 'rf_sim/microstripNotch.py'
+  workflow_dispatch:
+
+jobs:
+  simulate_microstrip_notch:
+    runs-on: ubuntu-latest
+    container:
+      # This pulls the image you will eventually publish
+      image: ghcr.io/cbeiraod/openems-docker-env:latest
+
+    # Map the container's working directory to the GitHub workspace
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Install Data Stack
+        run: pip3 install -r requirements.txt
+
+      - name: Run Test Simulation
+        run: python3 simulate_microstrip_notch.py
+
+      - name: Save S-Parameter Plot
+        uses: actions/upload-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          name: S-Parameters
+          path: Sim_MicrostripNotch/sParam.png
+          archive: false
+          retention-days: 5
