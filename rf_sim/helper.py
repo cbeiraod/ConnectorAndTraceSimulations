@@ -56,37 +56,20 @@ def generate_fdtd_mesh_1d(
 
         return best_opt, best_step
 
-    def smart_bisect(idx: int):
-        """
-        Attempts to snap a forced bisection to a nearby optional point,
-        provided the two resulting halves don't violate the ratio against each other.
-        """
-        L_cell = dx[idx]
-        left_b = mesh[idx]
-        right_b = mesh[idx+1]
-
-        best_pt = left_b + L_cell / 2.0
-        best_diff = L_cell
-        best_opt = None
-
-        for p_opt in optional:
-            if left_b < p_opt < right_b:
-                L1 = p_opt - left_b
-                L2 = right_b - p_opt
-
-                # Check if the split respects the ratio internally
-                if L1 <= L2 * ratio + 1e-9 and L2 <= L1 * ratio + 1e-9:
-                    diff = abs(p_opt - (left_b + L_cell / 2.0))
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_pt = p_opt
-                        best_opt = p_opt
-
-        return best_pt, best_opt
+    loop_count = 0
+    max_loops = 2000  # Safety valve: A 1D mesh should mathematically never need this many iterations
 
     while True:
+        loop_count += 1
+        if loop_count > max_loops:
+            raise RuntimeError(
+                f"Mesh generation failed to converge after {max_loops} iterations. "
+                f"Current mesh size: {len(mesh)}. "
+                "This is likely an algorithmic infinite loop edge case triggered by the optimizer."
+            )
+
         #print(mesh)
-        #time.sleep(5)
+        #time.sleep(1)
         # Calculate current cell sizes
         dx = [mesh[i+1] - mesh[i] for i in range(len(mesh)-1)]
 
