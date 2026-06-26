@@ -8,6 +8,8 @@ Because OpenEMS requires complex C++ math libraries, standard `pip` cannot insta
 
 Alternatively, you may install the C++ engine directly on your bare-metal machine. This takes a bit more setup, but allows you to use the `AppCSXCAD` GUI viewer to visually inspect your 3D geometry.
 
+I personally ran into an issue on my local installation on macOS where I could not run the simulations. Instead of running `python` normally, I had to pass the flag `python -O` to ignore asserts. I could never quite figure out which assert was failing, since it is internal to the OpenEMS engine and the eror reporting gives no useful information.
+
 ---
 
 ### Path A: The Docker Method (Recommended - 100% CI Parity)
