@@ -13,7 +13,7 @@ settings.register_profile(
 settings.register_profile(
     "ci",
     max_examples=500,
-    suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow]
+    suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow],
     # We omit Phase.shrink here. If a test fails, it reports the first failure
     # it found immediately without spending 5 minutes trying to simplify it.
     phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.target]
