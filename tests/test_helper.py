@@ -389,8 +389,8 @@ class TestFDTDMesher1DIntegration:
         check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2)
 
         # 2. Must be perfectly symmetric around 0
-        for pt in mesh:
-            assert any(pytest.approx(-pt, abs=1e-9) == m for m in mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
+        for pt in final_mesh:
+            assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
     def test_multiple_optional_points(self):
         """Tests the selection logic when multiple optional points are available in a gap."""
@@ -421,8 +421,8 @@ class TestFDTDMesher1DIntegration:
         check_mesh_validity(final_mesh, fixed, max_res=1.7472369284948892, ratio=1.2)
 
         # 2. Must be perfectly symmetric around 0
-        for pt in mesh:
-            assert any(pytest.approx(-pt, abs=1e-9) == m for m in mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
+        for pt in final_mesh:
+            assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
     @settings(max_examples=5)
     # @seed(42)  # <-- Uncomment this to globally freeze the random seed for this test
@@ -452,7 +452,7 @@ class TestFDTDMesher1DIntegration:
         mesh = mesher.generate()
 
         assert len(mesh) >= len(fixed_points)
-        check_mesh_validity(final_mesh, fixed_points, max_res=max_res, ratio=ratio)
+        check_mesh_validity(mesh, fixed_points, max_res=max_res, ratio=ratio)
 
 
 def test_openems_native_mesher_fails_constraints():
