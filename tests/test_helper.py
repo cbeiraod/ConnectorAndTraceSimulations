@@ -117,15 +117,48 @@ class TestFDTDMesher1DSplitting:
 
     def test_evaluate_optional_snap_success(self):
         """Test snapping to a valid optional point."""
-        pass
+        mesher = FDTDMesher1D([0.0, 10.0], [1.05], max_res=2.0, ratio=1.5)
+        # Candidate at 1.0. Target step is 1.0. Optional point at 1.05 is within tolerance.
+        # Distance from prev_pt (0.0) is 1.05 <= 2.0 (max_res).
+        # Ratio checks pass.
+        pt = mesher._evaluate_optional_snap(candidate_pt=1.0, prev_pt=0.0, next_pt=2.0, target_step=1.0)
+        assert pt == 1.05
 
-    def test_evaluate_optional_snap_violation(self):
-        """Test rejecting an optional point because it violates max_res or ratio."""
-        pass
+    def test_evaluate_optional_snap_violation_max_res(self):
+        """Test rejecting an optional point because it violates max_res."""
+        mesher = FDTDMesher1D([0.0, 10.0], [2.1], max_res=2.0, ratio=1.5)
+        # Candidate at 1.9. prev_pt is 0.0.
+        # Optional point at 2.1 is within a tolerance of candidate (e.g. 0.2 * 1.9 = 0.38)
+        # BUT 2.1 - 0.0 = 2.1 > max_res (2.0), so it should be rejected.
+        pt = mesher._evaluate_optional_snap(candidate_pt=1.9, prev_pt=0.0, next_pt=3.8, target_step=1.9)
+        assert pt == 1.9
 
-    def test_split_unforced_cell(self):
+    def test_evaluate_optional_snap_violation_ratio(self):
+        """Test rejecting an optional point because it violates the ratio constraint."""
+        # Set a strict ratio
+        mesher = FDTDMesher1D([0.0, 10.0], [1.2], max_res=2.0, ratio=1.1)
+        # Candidate is 1.0, target_step is 1.0. Optional is 1.2.
+        # Distance to prev_pt (0.0) is 1.2.
+        # 1.2 > 1.0 * 1.1 (violates ratio compared to ideal uniform target_step).
+        pt = mesher._evaluate_optional_snap(candidate_pt=1.0, prev_pt=0.0, next_pt=2.0, target_step=1.0)
+        assert pt == 1.0
+
+    def test_split_unforced_cell_no_optional(self):
         """Test Case A: Evenly splitting an oversized cell with no forces."""
-        pass
+        mesher = FDTDMesher1D([0.0, 5.0], [], max_res=2.0, ratio=1.5)
+        # Mesh has one cell size 5.0 at index 0.
+        # N = ceil(5.0 / 2.0) = 3.
+        # Step = 5.0 / 3 = 1.666...
+        new_points = mesher._split_unforced_cell(0)
+        assert new_points == pytest.approx([5.0 / 3.0, 10.0 / 3.0])
+
+    def test_split_unforced_cell_with_optional(self):
+        """Test Case A with an optional point to snap to."""
+        mesher = FDTDMesher1D([0.0, 5.0], [1.7], max_res=2.0, ratio=1.5)
+        # Ideal points: 1.666... and 3.333...
+        # 1.666... should snap to 1.7. 3.333... stays the same.
+        new_points = mesher._split_unforced_cell(0)
+        assert new_points == pytest.approx([1.7, 10.0 / 3.0])
 
     def test_split_forced_cell_one_sided(self):
         """Test Case B: Geometric progression from one side."""
@@ -138,6 +171,69 @@ class TestFDTDMesher1DSplitting:
     def test_check_rollback_condition(self):
         """Test Case D: Identifying when the next step creates an unsolvable sliver."""
         pass
+
+
+def check_mesh_validity(mesh, fixed_points, max_res, ratio):
+    """Helper function to assert a mesh respects all fundamental FDTD constraints."""
+    assert mesh is not None, "Mesh generation failed (returned None)."
+
+    # 1. All fixed points must be present
+    for fp in fixed_points:
+        assert fp in mesh, f"Fixed point {fp} is missing from the generated mesh."
+
+    # 2. Points must be sorted monotonically
+    assert mesh == sorted(mesh), "Mesh points are not strictly increasing."
+
+    # Calculate final sizes
+    dx = [mesh[i+1] - mesh[i] for i in range(len(mesh)-1)]
+
+    # 3. max_res constraint
+    for i, size in enumerate(dx):
+        assert size <= max_res + 1e-9, f"Cell {i} size {size} exceeds max_res {max_res}."
+
+    # 4. ratio constraint
+    for i in range(len(dx) - 1):
+        assert dx[i] <= dx[i+1] * ratio + 1e-9, \
+            f"Ratio violation: {dx[i]} > {dx[i+1]} * {ratio} at cells {i} and {i+1}"
+        assert dx[i+1] <= dx[i] * ratio + 1e-9, \
+            f"Ratio violation: {dx[i+1]} > {dx[i]} * {ratio} at cells {i} and {i+1}"
+
+
+class TestFDTDMesher1DIntegration:
+
+    @pytest.mark.parametrize("fixed_steps", [
+        [0.0, 1.0, 2.1],           # cell0: max_res, cell1: 1.1 max_res
+        [0.0, 1.0, 2.1, 3.1],      # cell0: max_res, cell1: 1.1 max_res, cell2: max_res
+        [0.0, 1.0, 2.9],           # cell0: max_res, cell1: 1.9 max_res
+        [0.0, 1.0, 2.9, 3.9],      # cell0: max_res, cell1: 1.9 max_res, cell2: max_res
+        [0.0, 1.0, 6.1],           # cell0: max_res, cell1: 5.1 max_res
+        [0.0, 1.0, 6.1, 7.1],      # cell0: max_res, cell1: 5.1 max_res, cell2: max_res
+        [0.0, 1.0, 6.9],           # cell0: max_res, cell1: 5.9 max_res
+        [0.0, 1.0, 6.9, 7.9],      # cell0: max_res, cell1: 5.9 max_res, cell2: max_res
+    ])
+    def test_unforced_cell_edge_cases_respect_constraints(self, fixed_steps, max_res = 1.0, ratio = 1.5):
+        """
+        Tests the edge cases where unforced cells are just above integer multiples
+        of max_res, forcing backward ratio corrections.
+        """
+        #max_res = 2.0
+        #ratio = 1.5
+
+        # Construct the fixed points based on the test case multipliers
+        if max_res == 1.0:
+            fixed = fixed_steps
+        else:
+            fixed = [0.0]
+            current = 0.0
+            for mult in fixed_steps:
+                current += max_res * mult
+                fixed.append(current)
+
+        mesher = FDTDMesher1D(fixed, optional_points=[], max_res=max_res, ratio=ratio)
+
+        final_mesh = mesher.generate()
+
+        check_mesh_validity(final_mesh, fixed, max_res, ratio)
 
 
 #def validate_mesh_constraints(mesh, fixed_points, max_res, ratio):
