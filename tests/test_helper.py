@@ -113,6 +113,33 @@ class TestFDTDMesher1DState:
         assert target is None
 
 
+class TestFDTDMesher1DSplitting:
+
+    def test_evaluate_optional_snap_success(self):
+        """Test snapping to a valid optional point."""
+        pass
+
+    def test_evaluate_optional_snap_violation(self):
+        """Test rejecting an optional point because it violates max_res or ratio."""
+        pass
+
+    def test_split_unforced_cell(self):
+        """Test Case A: Evenly splitting an oversized cell with no forces."""
+        pass
+
+    def test_split_forced_cell_one_sided(self):
+        """Test Case B: Geometric progression from one side."""
+        pass
+
+    def test_split_forced_cell_two_sided(self):
+        """Test Case C: Geometric progression from both sides meeting in the middle."""
+        pass
+
+    def test_check_rollback_condition(self):
+        """Test Case D: Identifying when the next step creates an unsolvable sliver."""
+        pass
+
+
 #def validate_mesh_constraints(mesh, fixed_points, max_res, ratio):
 #    """
 #    Helper function to validate that a generated mesh mathematically
