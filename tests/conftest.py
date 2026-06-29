@@ -1,5 +1,5 @@
 import os
-from hypothesis import settings, HealthCheck
+from hypothesis import settings, HealthCheck, Phase
 
 # Register a "dev" profile for fast, local development (e.g., 10 examples)
 settings.register_profile(
