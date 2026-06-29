@@ -27,6 +27,12 @@ class TestFDTDMesher1DState:
     def test_init_raises_error_on_invalid_fixed(self):
         """Test that we need at least two unique fixed points."""
         with pytest.raises(ValueError):
+            FDTDMesher1D(None, [], 2.0, 1.5)
+
+        with pytest.raises(ValueError):
+            FDTDMesher1D(1.2, [], 2.0, 1.5)
+
+        with pytest.raises(ValueError):
             FDTDMesher1D([5.0], [], 2.0, 1.5)
 
         with pytest.raises(ValueError):
@@ -44,76 +50,66 @@ class TestFDTDMesher1DState:
 
     def test_calculate_forces_no_forces(self):
         """Test when ratio is respected everywhere or cells are > max_res."""
-        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=2.0)
+        mesher = FDTDMesher1D([0.0, 1.5, 4.0], [], max_res=2.0, ratio=2.0)
         # dx = [1.5, 2.5] -> 1.5 is < max_res, but 2.5 < 1.5 * ratio (3.0), so no force
-        mesher.mesh = [0.0, 1.5, 4.0]
 
-        f_left, f_right = mesher._calculate_forces()
-
-        assert f_left == [0.0, 0.0]
-        assert f_right == [0.0, 0.0]
+        assert mesher._force_left == [0.0, 0.0]
+        assert mesher._force_right == [0.0, 0.0]
 
     def test_calculate_forces_with_violations(self):
         """Test force calculations when ratio is violated."""
         mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesher.mesh = [0.0, 1.0, 6.0, 7.2]
         # Mesh sizes (dx):
         # Cell 0: 1.0 (< max_res)
         # Cell 1: 5.0 (violates ratio from Cell 0 and Cell 2)
         # Cell 2: 1.2 (< max_res)
-        mesher.mesh = [0.0, 1.0, 6.0, 7.2]
-
-        f_left, f_right = mesher._calculate_forces()
 
         # Cell 1 feels force from Cell 0 on the left: 1.0 / 1.0 = 1.0
-        assert f_left[1] == pytest.approx(1.0 / 1.0)
-        assert f_left[0] == 0.0
-        assert f_left[2] == 0.0
+        assert mesher._force_left[1] == pytest.approx(1.0 / 1.0)
+        assert mesher._force_left[0] == 0.0
+        assert mesher._force_left[2] == 0.0
 
         # Cell 1 feels force from Cell 2 on the right: 1.0 / 1.2
-        assert f_right[1] == pytest.approx(1.0 / 1.2)
-        assert f_right[0] == 0.0
-        assert f_right[2] == 0.0
+        assert mesher._force_right[1] == pytest.approx(1.0 / 1.2)
+        assert mesher._force_right[0] == 0.0
+        assert mesher._force_right[2] == 0.0
 
     def test_find_target_cell_by_force(self, monkeypatch):
         """Test target selection when forces are active."""
-        mesher = FDTDMesher1D([0.0, 10.0], [], 2.0, 1.5)
+        mesher = FDTDMesher1D([0.0, 1.0, 3.0, 8.0], [], 2.1, 2.0)
+
+        # Simulate an environment where Cell 2 has the highest force
+        mesher._force_left = [0.0, 0.5, 1.0] # Max force is 1.0 at index 2
+        mesher._force_right = [0.0, 0.0, 0.8]
 
         # Setup mock to just return the first tied index using pytest's monkeypatch
         monkeypatch.setattr('random.choice', lambda seq: seq[0])
 
-        # Simulate an environment where Cell 2 has the highest force
-        mesher._get_cell_sizes = lambda: [1.0, 2.0, 5.0]
-        f_left = [0.0, 0.5, 1.0] # Max force is 1.0 at index 2
-        f_right = [0.0, 0.0, 0.8]
-
-        target = mesher._find_target_cell(f_left, f_right)
+        target = mesher._find_target_cell()
         assert target == 2
 
     def test_find_target_cell_by_size(self, monkeypatch):
         """Test target selection when no forces, but oversize cells exist."""
-        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
-
-        monkeypatch.setattr('random.choice', lambda seq: seq[0])
+        mesher = FDTDMesher1D([0.0, 3.0, 4.5, 8.5], [], max_res=2.0, ratio=1.5)
 
         # No forces, but Cell 0 (3.0) and Cell 2 (4.0) are > max_res
         # Cell 0 is the smallest oversized cell
-        mesher._get_cell_sizes = lambda: [3.0, 1.5, 4.0]
-        f_left = [0.0, 0.0, 0.0]
-        f_right = [0.0, 0.0, 0.0]
+        self._force_left = [0.0, 0.0, 0.0]
+        self._force_right = [0.0, 0.0, 0.0]
 
-        target = mesher._find_target_cell(f_left, f_right)
+        monkeypatch.setattr('random.choice', lambda seq: seq[0])
+
+        target = mesher._find_target_cell()
         assert target == 0 # Index of the 3.0 cell
 
     def test_find_target_cell_complete(self):
         """Test when mesh is perfectly valid."""
-        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesher = FDTDMesher1D([0.0, 1.5, 3.3, 4.5], [], max_res=2.0, ratio=1.5)
 
         # All cells <= max_res
-        mesher._get_cell_sizes = lambda: [1.5, 1.8, 1.2]
-        f_left = [0.0, 0.0, 0.0]
-        f_right = [0.0, 0.0, 0.0]
 
-        target = mesher._find_target_cell(f_left, f_right)
+        target = mesher._find_target_cell()
         assert target is None
 
 
