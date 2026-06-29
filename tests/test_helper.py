@@ -2,7 +2,6 @@ import pytest
 import random
 import sys
 from hypothesis import given, assume, settings, seed, example, strategies as st
-from rf_sim.helper import generate_fdtd_mesh_1d
 from rf_sim.helper import FDTDMesher1D
 
 class TestFDTDMesher1DState:

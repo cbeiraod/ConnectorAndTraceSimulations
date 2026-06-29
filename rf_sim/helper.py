@@ -9,26 +9,12 @@ class FDTDMesher1D:
         Initializes the mesher, cleans up the inputs (sorting, removing duplicates,
         filtering out-of-bounds optional points), and sets up the initial state.
         """
-        # 1. Preprocess inputs
-        if not fixed_points or not isinstance(fixed_points, list):
-            raise ValueError("You must define the fixed points of the mesh as a list")
-
-        fixed = sorted(list(set(fixed_points)))
-        min_val, max_val = fixed[0], fixed[-1]
-
-        if len(fixed) < 2:
-            raise ValueError("At least two fixed points are required to define a domain.")
-
-        self._fixed_points = fixed
-        self._min_val = min_val
-        self._max_val = max_val
-        self._optional_points = sorted([p for p in set(optional_points)
-                       if min_val < p < max_val and p not in fixed])
 
         self._max_res = max_res
         self._ratio = ratio
-
-        self.mesh = fixed
+        self.mesh = fixed_points
+        self._optional_points = sorted([p for p in set(optional_points)
+                       if self._min_val < p < self._max_val and p not in self._fixed_points])
 
     @property
     def max_res(self):
@@ -55,7 +41,20 @@ class FDTDMesher1D:
         return self._mesh
     @mesh.setter
     def mesh(self, value: list[float]):
-        self._mesh = value
+        if not value or not isinstance(value, list):
+            raise ValueError("You must define the fixed points of the mesh as a list")
+
+        fixed = sorted(list(set(value)))
+        min_val, max_val = fixed[0], fixed[-1]
+
+        if len(fixed) < 2:
+            raise ValueError("At least two fixed points are required to define a domain.")
+
+        self._fixed_points = fixed
+        self._min_val = min_val
+        self._max_val = max_val
+        self._mesh = fixed
+
         self.dx = self._get_cell_sizes()
         self._force_left, self._force_right = self._calculate_forces()
 
