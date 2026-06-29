@@ -231,6 +231,11 @@ class TestFDTDMesher1DIntegration:
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=max_res, ratio=ratio)
 
+        for val in mesher._force_left:
+            assert val == pytest.approx(0.0)
+        for val in mesher._force_right:
+            assert val == pytest.approx(0.0)
+
         final_mesh = mesher.generate()
 
         check_mesh_validity(final_mesh, fixed, max_res, ratio)
