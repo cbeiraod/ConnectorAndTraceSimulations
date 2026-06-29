@@ -160,17 +160,65 @@ class TestFDTDMesher1DSplitting:
         new_points = mesher._split_unforced_cell(0)
         assert new_points == pytest.approx([1.7, 10.0 / 3.0])
 
-    def test_split_forced_cell_one_sided(self):
-        """Test Case B: Geometric progression from one side."""
-        pass
+    def test_split_forced_cell_one_sided_left(self):
+        """Test Case B: Geometric progression from the left side perfectly closing gap."""
+        mesher = FDTDMesher1D([0.0, 1.0, 7.0], [], max_res=5.0, ratio=2.0)
+        # Target cell is index 1 (1.0 to 7.0), size 6.0
+        # Left neighbor size: 1.0. Right neighbor: None
+        # Geometric steps from left: 2.0, then 4.0 (totaling 6.0 exactly)
+        # We expect a new point to be placed at 1.0 + 2.0 = 3.0
+        new_points = mesher._split_forced_cell(1)
+        assert new_points == pytest.approx([3.0])
+
+    def test_split_forced_cell_one_sided_right(self):
+        """Test Case B: Geometric progression from the right side perfectly closing gap."""
+        mesher = FDTDMesher1D([0.0, 6.0, 7.0], [], max_res=5.0, ratio=2.0)
+        # Target cell is index 0 (0.0 to 6.0), size 6.0
+        # Left neighbor: None. Right neighbor size: 1.0
+        # Geometric steps stepping back from right: 2.0, then 4.0
+        # We expect a new point to be placed at 7.0 - 1.0 (right point) - 2.0 = 4.0
+        # Wait, the cell is 0.0 to 6.0. 6.0 - 2.0 = 4.0.
+        new_points = mesher._split_forced_cell(0)
+        assert new_points == pytest.approx([4.0])
 
     def test_split_forced_cell_two_sided(self):
-        """Test Case C: Geometric progression from both sides meeting in the middle."""
-        pass
+        """Test Case C: Geometric progression from both sides perfectly meeting in the middle."""
+        mesher = FDTDMesher1D([0.0, 1.0, 7.0, 8.0], [], max_res=5.0, ratio=2.0)
+        # Target cell is index 1 (1.0 to 7.0), size 6.0.
+        # Both left and right neighbors have size 1.0.
+        # Left steps: 2.0 -> pt at 3.0.
+        # Right steps: 2.0 -> pt at 5.0.
+        # Remaining gap between 3.0 and 5.0 is exactly 2.0 (no slivers, fits perfectly).
+        new_points = mesher._split_forced_cell(1)
+        assert new_points == pytest.approx([3.0, 5.0])
+
+    def test_split_forced_cell_two_sided_larger(self):
+        """Test Case C: Geometric progression from both sides perfectly meeting in the middle."""
+        mesher = FDTDMesher1D([0.0, 1.0, 9.0, 10.0], [], max_res=5.0, ratio=2.0)
+        # Target cell is index 1 (1.0 to 9.0), size 8.0.
+        # Both left and right neighbors have size 1.0.
+        # Left steps: 2.0 -> pt at 3.0.
+        # Right steps: 2.0 -> pt at 7.0.
+        # Remaining gap between 3.0 and 7.0 is exactly 4.0 (no slivers, fits perfectly).
+        new_points = mesher._split_forced_cell(1)
+        assert new_points == pytest.approx([3.0, 7.0])
 
     def test_check_rollback_condition(self):
         """Test Case D: Identifying when the next step creates an unsolvable sliver."""
-        pass
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=5.0, ratio=2.0)
+
+        # Scenario 1: Gap is 3.0, next proposed step is 2.0.
+        # Remaining space is 1.0. Next step can safely reduce by ratio down to (2.0 / 2.0) = 1.0.
+        # 1.0 >= 1.0. So it's safe (barely). Not a sliver.
+        assert mesher._check_rollback_condition(remaining_gap=3.0, next_proposed_step=2.0) is False
+
+        # Scenario 2: Gap is 2.5, next proposed step is 2.0.
+        # Remaining space is 0.5. Next step minimum allowed is (2.0 / 2.0) = 1.0.
+        # 0.5 < 1.0, so this leaves a sliver! Rollback condition triggers.
+        assert mesher._check_rollback_condition(remaining_gap=2.5, next_proposed_step=2.0) is True
+
+        # Scenario 3: Gap is exactly the next step (2.0), no space left. Perfect fit.
+        assert mesher._check_rollback_condition(remaining_gap=2.0, next_proposed_step=2.0) is False
 
 
 def check_mesh_validity(mesh, fixed_points, max_res, ratio):
@@ -211,7 +259,7 @@ class TestFDTDMesher1DIntegration:
         [0.0, 1.0, 6.9],           # cell0: max_res, cell1: 5.9 max_res
         [0.0, 1.0, 6.9, 7.9],      # cell0: max_res, cell1: 5.9 max_res, cell2: max_res
     ])
-    def test_unforced_cell_edge_cases_respect_constraints(self, fixed_steps, max_res = 1.0, ratio = 1.5):
+    def test_unforced_cell_edge_cases_respect_constraints(self, fixed_steps, max_res = 1.0, ratio = 1.1):
         """
         Tests the edge cases where unforced cells are just above integer multiples
         of max_res, forcing backward ratio corrections.
