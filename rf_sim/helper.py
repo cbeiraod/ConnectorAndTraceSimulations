@@ -4,7 +4,7 @@ import math
 
 
 class FDTDMesher1D:
-    algorithms = ["advancing_front", "simple_uniform"]
+    algorithms = ["advancing_front", "segment_uniform"]
 
     def __init__(self, fixed_points: list[float], optional_points: list[float], max_res: float, ratio: float):
         """
@@ -62,31 +62,83 @@ class FDTDMesher1D:
         return self._mesh
     @mesh.setter
     def mesh(self, value: list[float]):
-        self._mesh = fixed
+        self._mesh = value
 
         self.dx = self._get_cell_sizes()
         self._force_left, self._force_right = self._calculate_forces()
 
-    def generate(self, algorithm: str = "advancing_front", max_iterations: int = 2000, **kwargs) -> list[float]:
+    def generate(self, algorithm: str = "advancing_front", **kwargs) -> list[float]:
         """
         The main orchestrator loop.
-        Calls the helper methods below until no forces exist and no cells > max_res.
         """
         if algorithm not in self.algorithms:
             raise RuntimeError(f"Unknown algorithm: {algorithm}")
 
         if algorithm == "advancing_front":
-            return self._advancing_front(max_iterations=max_iterations)
+            return self._advancing_front(**kwargs)
+        elif algorithm == "segment_uniform":
+            return self._segment_uniform(**kwargs)
+        #elif algorithm == "simple_uniform":
+        #    return self._simple_uniform(**kwargs)
         else:
             return self.mesh
 
-    def _simple_uniform(self):
-        pass
-
-    def _advancing_front(self, max_iterations: int = 2000) -> list[float]:
+    def _segment_uniform(self, snap_to_optional: bool = True, **kwargs) -> list[float]:
         """
-        The main orchestrator loop.
-        Calls the helper methods below until no forces exist and no cells > max_res.
+        A robust, baseline segment-by-segment meshing algorithm.
+        It isolates the domain between consecutive fixed points and applies
+        a uniform subdivision to strictly satisfy max_res.
+        Ignores the global ratio constraint, ensuring algorithmic stability.
+        Accepts **kwargs to safely swallow unexpected parameters.
+        """
+        new_mesh = []
+
+        for i in range(len(self.fixed_points) - 1):
+            X = self.fixed_points[i]
+            Y = self.fixed_points[i+1]
+
+            # Add the left boundary of the segment
+            new_mesh.append(X)
+
+            size = Y - X
+            N = math.ceil(size / self.max_res)
+
+            if N > 1:
+                step = size / N
+                for k in range(1, N):
+                    candidate_pt = X + k * step
+
+                    if snap_to_optional:
+                        prev_bound = new_mesh[-1]
+                        snapped_pt = self._evaluate_optional_snap(
+                            candidate_pt=candidate_pt,
+                            prev_pt=prev_bound,
+                            next_pt=Y,
+                            target_step=step
+                        )
+                        new_mesh.append(snapped_pt)
+                    else:
+                        new_mesh.append(candidate_pt)
+
+        # Append the final boundary point
+        new_mesh.append(self.fixed_points[-1])
+
+        return new_mesh
+
+    def _simple_uniform(self, min_test_cell_ratio=0.6, **kwargs):
+        domain = self._max_val - self._min_val
+
+        min_cells = math.ceil(domain / self.max_res)
+        max_cells = math.ceil(domain / (self.max_res * min_test_cell_ratio))
+
+        return self.mesh
+
+    def _advancing_front(self, max_iterations: int = 2000, **kwargs) -> list[float]:
+        """
+        An advanced, iterative cascading algorithm (Advancing Front).
+        It dynamically propagates ratio constraints across the grid by applying
+        'forces' from smaller cells to larger neighbors, splitting them
+        geometrically to maintain smooth transitions and minimize dispersion error.
         """
         loop_count = 0
         while True:
