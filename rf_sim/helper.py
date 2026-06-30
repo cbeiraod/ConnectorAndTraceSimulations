@@ -90,7 +90,7 @@ class FDTDMesher1D:
         else:
             return self.mesh
 
-    def _iterative_relaxation(self, max_iterations: int = 5000, relaxation_factor: float = 0.2, snap_to_optional: bool = True, **kwargs) -> list[float]:
+    def _iterative_relaxation(self, max_iterations: int = 8000, relaxation_factor: float = 0.2, snap_to_optional: bool = True, **kwargs) -> list[float]:
         """
         An iterative relaxation (spring) approach that guarantees all fixed points are included.
         1. Starts with the best base grid from `_global_grid_search`.
@@ -118,6 +118,7 @@ class FDTDMesher1D:
         # 3. Iterative relaxation (Spring Model)
         changed = True
         iters = 0
+        stagnation_counter = 0
 
         while changed and iters < max_iterations:
             changed = False
@@ -169,8 +170,38 @@ class FDTDMesher1D:
                         changed = True
 
             # Apply shifts simultaneously to prevent asymmetric bias
+            max_shift_applied = 0.0
             for i in range(1, len(self.mesh) - 1):
                 self.mesh[i] += shifts[i]
+                max_shift_applied = max(max_shift_applied, abs(shifts[i]))
+
+            # --- Topological Insertion (Stagnation Break) ---
+            max_demand = max(shrink_demand) if shrink_demand else 0.0
+
+            # Detect if we are moving too slowly to resolve the current stress in a reasonable time
+            if max_demand > 1e-4:
+                # If max shift is tiny, or if it would take >100 iterations at current speed to fix the demand
+                if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
+                    stagnation_counter += 1
+                else:
+                    stagnation_counter = 0
+            else:
+                stagnation_counter = 0
+
+            # If the mesh has been starved of points/stagnant for 50 iterations, inject a degree of freedom
+            if stagnation_counter > 50:
+                # Find the most stressed cell
+                stiff_cell_idx = shrink_demand.index(max_demand)
+
+                # Bisect the cell to add a degree of freedom!
+                new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
+
+                self.mesh.insert(stiff_cell_idx + 1, new_pt)
+                is_fixed.insert(stiff_cell_idx + 1, False)
+
+                changed = True
+                stagnation_counter = 0  # Reset the counter
+                logger.warn(f"Iterative Relaxation: Stagnation broken by splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
 
         if iters >= max_iterations:
             raise RuntimeError(f"iterative_relaxation failed to converge after {max_iterations} iterations.")
