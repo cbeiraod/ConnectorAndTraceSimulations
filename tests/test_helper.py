@@ -233,9 +233,13 @@ class TestFDTDMesher1DSplitting:
         assert mesher._check_rollback_condition(remaining_gap=2.0, next_proposed_step=2.0) is False
 
 
-def check_mesh_validity(mesh, fixed_points, max_res, ratio):
+def check_mesh_validity(mesh, fixed_points, max_res, ratio, algorithm="advancing_front"):
     """Helper function to assert a mesh respects all fundamental FDTD constraints."""
     assert mesh is not None, "Mesh generation failed (returned None)."
+
+    algorithm_no_ratio = [
+        "segment_uniform"
+    ]
 
     # 1. All fixed points must be present
     for fp in fixed_points:
@@ -252,11 +256,12 @@ def check_mesh_validity(mesh, fixed_points, max_res, ratio):
         assert size <= max_res + 1e-9, f"Cell {i} size {size} exceeds max_res {max_res}."
 
     # 4. ratio constraint
-    for i in range(len(dx) - 1):
-        assert dx[i] <= dx[i+1] * ratio + 1e-9, \
-            f"Ratio violation: {dx[i]} > {dx[i+1]} * {ratio} at cells {i} and {i+1}"
-        assert dx[i+1] <= dx[i] * ratio + 1e-9, \
-            f"Ratio violation: {dx[i+1]} > {dx[i]} * {ratio} at cells {i} and {i+1}"
+    if algorithm not in algorithm_no_ratio:
+        for i in range(len(dx) - 1):
+            assert dx[i] <= dx[i+1] * ratio + 1e-9, \
+                f"Ratio violation: {dx[i]} > {dx[i+1]} * {ratio} at cells {i} and {i+1}"
+            assert dx[i+1] <= dx[i] * ratio + 1e-9, \
+                f"Ratio violation: {dx[i+1]} > {dx[i]} * {ratio} at cells {i} and {i+1}"
 
 @st.composite
 def non_sliver_fixed_points(draw, min_gap=0.5, min_val=-100.0, max_val=100.0):
@@ -292,6 +297,7 @@ def non_sliver_fixed_points(draw, min_gap=0.5, min_val=-100.0, max_val=100.0):
 
 class TestFDTDMesher1DIntegration:
 
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
     @pytest.mark.parametrize("fixed_steps", [
         [0.0, 1.0, 2.1],           # cell0: max_res, cell1: 1.1 max_res
         [0.0, 1.0, 2.1, 3.1],      # cell0: max_res, cell1: 1.1 max_res, cell2: max_res
@@ -302,7 +308,7 @@ class TestFDTDMesher1DIntegration:
         [0.0, 1.0, 6.9],           # cell0: max_res, cell1: 5.9 max_res
         [0.0, 1.0, 6.9, 7.9],      # cell0: max_res, cell1: 5.9 max_res, cell2: max_res
     ])
-    def test_unforced_cell_edge_cases_respect_constraints(self, fixed_steps, max_res = 1.0, ratio = 1.1):
+    def test_unforced_cell_edge_cases_respect_constraints(self, algorithm, fixed_steps, max_res = 1.0, ratio = 1.1):
         """
         Tests the edge cases where unforced cells are just above integer multiples
         of max_res, forcing backward ratio corrections.
@@ -327,39 +333,42 @@ class TestFDTDMesher1DIntegration:
         for val in mesher._force_right:
             assert val == pytest.approx(0.0)
 
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm)
 
-        check_mesh_validity(final_mesh, fixed, max_res, ratio)
+        check_mesh_validity(final_mesh, fixed, max_res, ratio, algorithm=algorithm)
 
-    def test_simple_bisection(self):
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    def test_simple_bisection(self, algorithm):
         """Tests the trivial case where the max_res is exactly half of the point spacing."""
         fixed = [-1.0, 1.0]
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=1.0, ratio=1.2)
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm)
 
         assert final_mesh == pytest.approx([-1.0, 0.0, 1.0])
-        check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2)
+        check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2, algorithm=algorithm)
 
-    def test_basic_bisection(self):
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    def test_basic_bisection(self, algorithm):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
         fixed = [-1.0, 1.0]
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=0.9, ratio=1.2)
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm)
 
         # Expected to safely split into 3 equal cells of 2/3
         assert final_mesh == pytest.approx([-1.0, -1/3, 1/3, 1.0])
-        check_mesh_validity(final_mesh, fixed, max_res=0.9, ratio=1.2)
+        check_mesh_validity(final_mesh, fixed, max_res=0.9, ratio=1.2, algorithm=algorithm)
 
-    def test_basic_bisection_with_optional_points(self):
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    def test_basic_bisection_with_optional_points(self, algorithm):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
         fixed = [-1.0, 1.0]
         optional = [-0.3, 0.3]
         mesher = FDTDMesher1D(fixed, optional_points=optional, max_res=0.9, ratio=1.2)
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm)
 
         # Expected to safely split into 3 equal cells of 2/3
         assert final_mesh == pytest.approx([-1.0, -0.3, 0.3, 1.0])
-        check_mesh_validity(final_mesh, fixed, max_res=0.9, ratio=1.2)
+        check_mesh_validity(final_mesh, fixed, max_res=0.9, ratio=1.2, algorithm=algorithm)
 
 
     def test_complex_grading_cascade(self):
@@ -369,29 +378,31 @@ class TestFDTDMesher1DIntegration:
         fixed.insert(1, 0.1)
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=2.0, ratio=1.5)
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm="advancing_front")
 
-        check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5)
+        check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm="advancing_front")
         # Ensure it successfully expanded up to max_res
         assert any(pytest.approx(val, abs=1e-2) == 2.0 for val in mesher.dx), "Mesh failed to scale up to max_res"
 
-    def test_symmetric_non_uniform_mesh(self):
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    def test_symmetric_non_uniform_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
         positive_half = [0.0, 4.0, 4.5, 5.0, 5.5, 6.0, 12.0]
         # Reconstruct the full symmetric domain
         fixed = sorted(list(set([-x for x in positive_half] + positive_half)))
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=1.0, ratio=1.2)
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm)
 
         # 1. Must satisfy all mathematical FDTD requirements
-        check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2)
+        check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2, algorithm=algorithm)
 
         # 2. Must be perfectly symmetric around 0
         for pt in final_mesh:
             assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
-    def test_multiple_optional_points(self):
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    def test_multiple_optional_points(self, algorithm):
         """Tests the selection logic when multiple optional points are available in a gap."""
         fixed = [0.0, 2.0]
         # Max res is 1.0, so ideal step is 1.0.
@@ -400,12 +411,13 @@ class TestFDTDMesher1DIntegration:
         optional = [0.5, 0.9, 1.05]
 
         mesher = FDTDMesher1D(fixed, optional_points=optional, max_res=1.09, ratio=1.5)
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm)
 
-        check_mesh_validity(final_mesh, fixed, max_res=1.09, ratio=1.5)
+        check_mesh_validity(final_mesh, fixed, max_res=1.09, ratio=1.5, algorithm=algorithm)
         assert any(pytest.approx(1.05, abs=1e-9) == m for m in final_mesh), "Failed to snap to the optimal optional point (1.05)"
 
-    def test_symmetric_non_uniform_example_mesh(self):
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    def test_symmetric_non_uniform_example_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
         positive_half = [0.25, 0.45, 0.4, 0.35, 0.3, 5.0, 0.8500000000000001]
         # Reconstruct the full symmetric domain
@@ -414,15 +426,16 @@ class TestFDTDMesher1DIntegration:
         #raise RuntimeError(fixed)
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=1.7472369284948892, ratio=1.2)
-        final_mesh = mesher.generate()
+        final_mesh = mesher.generate(algorithm)
 
         # 1. Must satisfy all mathematical FDTD requirements
-        check_mesh_validity(final_mesh, fixed, max_res=1.7472369284948892, ratio=1.2)
+        check_mesh_validity(final_mesh, fixed, max_res=1.7472369284948892, ratio=1.2, algorithm=algorithm)
 
         # 2. Must be perfectly symmetric around 0
         for pt in final_mesh:
             assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
     @settings(max_examples=5)
     # @seed(42)  # <-- Uncomment this to globally freeze the random seed for this test
     # @example(...) <-- When Hypothesis finds a bug, paste the output here to keep it forever!
@@ -440,7 +453,7 @@ class TestFDTDMesher1DIntegration:
         max_res=st.floats(min_value=1.0, max_value=10.0),
         ratio=st.floats(min_value=1.1, max_value=2.0)
     )
-    def test_fuzz_mesh_generation(self, fixed_points, optional_points, max_res, ratio):
+    def test_fuzz_mesh_generation(self, algorithm, fixed_points, optional_points, max_res, ratio):
         """
         Fuzz test the mesher with physically sound, non-sliver inputs.
         """
@@ -448,10 +461,10 @@ class TestFDTDMesher1DIntegration:
         assume(domain_size >= len(fixed_points) * max_res)
 
         mesher = FDTDMesher1D(fixed_points, optional_points, max_res, ratio)
-        mesh = mesher.generate()
+        mesh = mesher.generate(algorithm)
 
         assert len(mesh) >= len(fixed_points)
-        check_mesh_validity(mesh, fixed_points, max_res=max_res, ratio=ratio)
+        check_mesh_validity(mesh, fixed_points, max_res=max_res, ratio=ratio, algorithm=algorithm)
 
 
 def test_openems_native_mesher_fails_constraints():
