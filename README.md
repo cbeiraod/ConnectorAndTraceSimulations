@@ -12,7 +12,8 @@ I personally ran into an issue on my local installation on macOS where I could n
 
 ### Dev
 
-If you are actually developing code... possibly modifying helper functions and so on, you may want to install the `requirements-dev.txt` instead and run tests with: `python -m pytest`
+If you are actually developing code... possibly modifying helper functions and so on, you may want to install the `requirements-dev.txt` instead and run tests with: `python -m pytest`.
+If you want to run the `visualize_mesh.py` script (which allows to preview the results of the meshing algorithms), please run it with `python -m scripts.visualize_mesh` from the root directory.
 
 
 ---
