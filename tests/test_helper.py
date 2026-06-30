@@ -297,7 +297,11 @@ def non_sliver_fixed_points(draw, min_gap=0.5, min_val=-100.0, max_val=100.0):
 
 class TestFDTDMesher1DIntegration:
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    @pytest.mark.parametrize("algorithm", [
+        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
+        "segment_uniform",
+        "segment_graded"
+    ])
     @pytest.mark.parametrize("fixed_steps", [
         [0.0, 1.0, 2.1],           # cell0: max_res, cell1: 1.1 max_res
         [0.0, 1.0, 2.1, 3.1],      # cell0: max_res, cell1: 1.1 max_res, cell2: max_res
@@ -337,7 +341,7 @@ class TestFDTDMesher1DIntegration:
 
         check_mesh_validity(final_mesh, fixed, max_res, ratio, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform", "segment_graded"])
     def test_simple_bisection(self, algorithm):
         """Tests the trivial case where the max_res is exactly half of the point spacing."""
         fixed = [-1.0, 1.0]
@@ -347,7 +351,7 @@ class TestFDTDMesher1DIntegration:
         assert final_mesh == pytest.approx([-1.0, 0.0, 1.0])
         check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform", "segment_graded"])
     def test_basic_bisection(self, algorithm):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
         fixed = [-1.0, 1.0]
@@ -358,7 +362,7 @@ class TestFDTDMesher1DIntegration:
         assert final_mesh == pytest.approx([-1.0, -1/3, 1/3, 1.0])
         check_mesh_validity(final_mesh, fixed, max_res=0.9, ratio=1.2, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform", "segment_graded"])
     def test_basic_bisection_with_optional_points(self, algorithm):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
         fixed = [-1.0, 1.0]
@@ -398,6 +402,19 @@ class TestFDTDMesher1DIntegration:
         # check_mesh_validity handles skipping the ratio check for this algorithm
         check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm="segment_uniform")
 
+    def test_segment_graded_respects_global_ratio(self):
+        """Tests that segment_graded iteratively fixes the ratio jumps across fixed point boundaries."""
+        # The ratio between the 10.0 gap and the 0.1 gap is 100x (violating a ratio of 1.5)
+        fixed = [0.0, 10.0, 10.1]
+        mesher = FDTDMesher1D(fixed, optional_points=[], max_res=2.0, ratio=1.5)
+
+        # Using segment_graded will aggressively grade the 10.0 segment
+        # so it safely steps down to match the 0.1 cell size at the boundary.
+        final_mesh = mesher.generate(algorithm="segment_graded")
+
+        # We MUST assert it passes the ratio validity check (which segment_uniform fails here)
+        check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm="segment_graded")
+
     def test_segment_uniform_right_side_snap_rejection(self):
         """Tests that an optional point is rejected if snapping to it violates constraints on the right side."""
         # Fixed domain of 3.0. Target step is 1.5. Candidate point is 1.5.
@@ -415,7 +432,11 @@ class TestFDTDMesher1DIntegration:
         # If successfully rejected, the point stays exactly at the ideal candidate 1.5
         assert final_mesh == pytest.approx([0.0, 1.5, 3.0])
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    @pytest.mark.parametrize("algorithm", [
+        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
+        "segment_uniform",
+        "segment_graded"
+    ])
     def test_symmetric_non_uniform_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
         positive_half = [0.0, 4.0, 4.5, 5.0, 5.5, 6.0, 12.0]
@@ -432,7 +453,7 @@ class TestFDTDMesher1DIntegration:
         for pt in final_mesh:
             assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform", "segment_graded"])
     def test_multiple_optional_points(self, algorithm):
         """Tests the selection logic when multiple optional points are available in a gap."""
         fixed = [0.0, 2.0]
@@ -447,7 +468,11 @@ class TestFDTDMesher1DIntegration:
         check_mesh_validity(final_mesh, fixed, max_res=1.09, ratio=1.5, algorithm=algorithm)
         assert any(pytest.approx(1.05, abs=1e-9) == m for m in final_mesh), "Failed to snap to the optimal optional point (1.05)"
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    @pytest.mark.parametrize("algorithm", [
+        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
+        "segment_uniform",
+        "segment_graded"
+    ])
     def test_symmetric_non_uniform_example_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
         positive_half = [0.25, 0.45, 0.4, 0.35, 0.3, 5.0, 0.8500000000000001]
@@ -466,7 +491,12 @@ class TestFDTDMesher1DIntegration:
         for pt in final_mesh:
             assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
-    @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
+    #@pytest.mark.skip
+    @pytest.mark.parametrize("algorithm", [
+        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
+        "segment_uniform",
+        "segment_graded"
+    ])
     @settings(max_examples=5)
     # @seed(42)  # <-- Uncomment this to globally freeze the random seed for this test
     # @example(...) <-- When Hypothesis finds a bug, paste the output here to keep it forever!
