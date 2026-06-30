@@ -12,9 +12,10 @@ class FDTDMesher1D:
 
         self._max_res = max_res
         self._ratio = ratio
-        self.mesh = fixed_points
+        self.fixed_points = fixed_points
         self._optional_points = sorted([p for p in set(optional_points)
                        if self._min_val < p < self._max_val and p not in self._fixed_points])
+        self.mesh = self.fixed_points
 
     @property
     def max_res(self):
@@ -37,10 +38,10 @@ class FDTDMesher1D:
         return self._optional_points
 
     @property
-    def mesh(self):
-        return self._mesh
-    @mesh.setter
-    def mesh(self, value: list[float]):
+    def fixed_points(self):
+        return self._fixed_points
+    @fixed_points.setter
+    def fixed_points(self, value: list[float]):
         if not value or not isinstance(value, list):
             raise ValueError("You must define the fixed points of the mesh as a list")
 
@@ -53,6 +54,12 @@ class FDTDMesher1D:
         self._fixed_points = fixed
         self._min_val = min_val
         self._max_val = max_val
+
+    @property
+    def mesh(self):
+        return self._mesh
+    @mesh.setter
+    def mesh(self, value: list[float]):
         self._mesh = fixed
 
         self.dx = self._get_cell_sizes()
