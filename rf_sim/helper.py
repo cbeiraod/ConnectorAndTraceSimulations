@@ -118,12 +118,10 @@ class FDTDMesher1D:
                 is_fixed[i] = True
 
         # 3. Iterative relaxation (Spring Model)
-        changed = True
         iters = 0
         stagnation_counter = 0
 
-        while changed and iters < max_iterations:
-            changed = False
+        while iters < max_iterations:
             iters += 1
 
             # Calculate current cell sizes
@@ -131,24 +129,33 @@ class FDTDMesher1D:
 
             # Calculate "shrink demand" (stress) for each cell
             shrink_demand = [0.0] * len(self.dx)
+
+            # Incorporate the 1e-9 test tolerance directly into the demand subtraction
             for j in range(len(self.dx)):
                 demand = 0.0
 
                 # Stress from exceeding max_res
                 if self.dx[j] > self.max_res + 1e-9:
-                    demand += (self.dx[j] - self.max_res)
+                    demand += (self.dx[j] - (self.max_res + 1e-9))
 
                 # Stress from ratio violation with left neighbor
                 if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio + 1e-9:
-                    demand += (self.dx[j] - self.dx[j-1] * self.ratio)
+                    demand += (self.dx[j] - (self.dx[j-1] * self.ratio + 1e-9))
 
                 # Stress from ratio violation with right neighbor
                 if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio + 1e-9:
-                    demand += (self.dx[j] - self.dx[j+1] * self.ratio)
-
+                    demand += (self.dx[j] - (self.dx[j+1] * self.ratio + 1e-9))
                 shrink_demand[j] = demand
 
+            max_demand = max(shrink_demand) if shrink_demand else 0.0
+
+            # Strict Mathematical Exit Condition
+            if max_demand == 0.0:
+                break
+
+            stiff_cell_idx = shrink_demand.index(max_demand)
             shifts = [0.0] * len(self.mesh)
+            max_shift_applied = 0.0
 
             # Calculate net force and shift for each internal node
             for i in range(1, len(self.mesh) - 1):
@@ -158,7 +165,7 @@ class FDTDMesher1D:
                 # Net force: right cell pushing right (+) minus left cell pushing left (-)
                 force = shrink_demand[i] - shrink_demand[i-1]
 
-                if abs(force) > 1e-9:
+                if abs(force) > 1e-12:
                     raw_shift = force * relaxation_factor
 
                     # Prevent points from crossing or creating microscopic slivers
@@ -167,43 +174,26 @@ class FDTDMesher1D:
 
                     shift = max(max_left, min(max_right, raw_shift))
                     shifts[i] = shift
-
-                    if abs(shift) > 1e-6:
-                        changed = True
+                    max_shift_applied = max(max_shift_applied, abs(shift))
 
             # Apply shifts simultaneously to prevent asymmetric bias
-            max_shift_applied = 0.0
             for i in range(1, len(self.mesh) - 1):
                 self.mesh[i] += shifts[i]
-                max_shift_applied = max(max_shift_applied, abs(shifts[i]))
 
             # --- Topological Insertion (Stagnation Break) ---
-            max_demand = max(shrink_demand) if shrink_demand else 0.0
-
-            # Detect if we are moving too slowly to resolve the current stress in a reasonable time
-            if max_demand > 1e-4:
-                # If max shift is tiny, or if it would take >100 iterations at current speed to fix the demand
-                if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
-                    stagnation_counter += 1
-                else:
-                    stagnation_counter = 0
+            if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
+                stagnation_counter += 1
             else:
                 stagnation_counter = 0
 
-            # If the mesh has been starved of points/stagnant for 50 iterations, inject a degree of freedom
-            if stagnation_counter > 50:
-                # Find the most stressed cell
-                stiff_cell_idx = shrink_demand.index(max_demand)
-
-                # Bisect the cell to add a degree of freedom!
+            # Inject if slowly stagnating, OR if strictly frozen despite active demand!
+            if stagnation_counter > 50 or max_shift_applied < 1e-12:
                 new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
-
                 self.mesh.insert(stiff_cell_idx + 1, new_pt)
                 is_fixed.insert(stiff_cell_idx + 1, False)
 
-                changed = True
                 stagnation_counter = 0  # Reset the counter
-                logger.debug(f"Iterative Relaxation: Stagnation broken by splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
+                logger.debug(f"Iterative Relaxation: Splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
 
         if iters >= max_iterations:
             raise RuntimeError(f"iterative_relaxation failed to converge after {max_iterations} iterations.")
@@ -254,17 +244,33 @@ class FDTDMesher1D:
             if any(abs(p - fp) < 1e-9 for fp in self.fixed_points):
                 is_fixed[i] = True
 
-        changed = True
         iters = 0
         stagnation_counter = 0
 
-        while changed and iters < max_iterations:
-            changed = False
+        while iters < max_iterations:
             iters += 1
 
+            self.dx = self._get_cell_sizes()
+            shrink_demand = [0.0] * len(self.dx)
+
+            for j in range(len(self.dx)):
+                demand = 0.0
+                if self.dx[j] > self.max_res + 1e-9:
+                    demand += (self.dx[j] - (self.max_res + 1e-9))
+                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio + 1e-9:
+                    demand += (self.dx[j] - (self.dx[j-1] * self.ratio + 1e-9))
+                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio + 1e-9:
+                    demand += (self.dx[j] - (self.dx[j+1] * self.ratio + 1e-9))
+                shrink_demand[j] = demand
+
+            max_demand = max(shrink_demand) if shrink_demand else 0.0
+
+            # Strict Mathematical Exit Condition
+            if max_demand == 0.0:
+                break
+
+            stiff_cell_idx = shrink_demand.index(max_demand)
             max_shift_applied = 0.0
-            max_demand = 0.0
-            stiff_cell_idx = -1
 
             # Sequential in-place sweep (Gauss-Seidel)
             for i in range(1, len(self.mesh) - 1):
@@ -277,66 +283,49 @@ class FDTDMesher1D:
                 # Evaluate demand on the left cell (i-1)
                 demand_l = 0.0
                 if dx_l > self.max_res + 1e-9:
-                    demand_l += (dx_l - self.max_res)
+                    demand_l += (dx_l - (self.max_res + 1e-9))
                 if i > 1:
                     dx_ll = self.mesh[i-1] - self.mesh[i-2]
                     if dx_l > dx_ll * self.ratio + 1e-9:
-                        demand_l += (dx_l - dx_ll * self.ratio)
+                        demand_l += (dx_l - (dx_ll * self.ratio + 1e-9))
                 if dx_l > dx_r * self.ratio + 1e-9:
-                    demand_l += (dx_l - dx_r * self.ratio)
+                    demand_l += (dx_l - (dx_r * self.ratio + 1e-9))
 
                 # Evaluate demand on the right cell (i)
                 demand_r = 0.0
                 if dx_r > self.max_res + 1e-9:
-                    demand_r += (dx_r - self.max_res)
+                    demand_r += (dx_r - (self.max_res + 1e-9))
                 if dx_r > dx_l * self.ratio + 1e-9:
-                    demand_r += (dx_r - dx_l * self.ratio)
+                    demand_r += (dx_r - (dx_l * self.ratio + 1e-9))
                 if i < len(self.mesh) - 2:
                     dx_rr = self.mesh[i+2] - self.mesh[i+1]
                     if dx_r > dx_rr * self.ratio + 1e-9:
-                        demand_r += (dx_r - dx_rr * self.ratio)
-
-                # Track absolute max demand to feed the AMR stagnation logic
-                if demand_l > max_demand:
-                    max_demand = demand_l
-                    stiff_cell_idx = i - 1
-                if demand_r > max_demand:
-                    max_demand = demand_r
-                    stiff_cell_idx = i
+                        demand_r += (dx_r - (dx_rr * self.ratio + 1e-9))
 
                 force = demand_r - demand_l
 
-                if abs(force) > 1e-9:
+                if abs(force) > 1e-12:
                     raw_shift = force * relaxation_factor
-
-                    # Prevent crossing bounds
                     max_left = -0.4 * dx_l
                     max_right = 0.4 * dx_r
                     shift = max(max_left, min(max_right, raw_shift))
 
-                    if abs(shift) > 1e-6:
-                        # Update the point IN PLACE so the next iteration instantly feels it
+                    if abs(shift) > 1e-12:
                         self.mesh[i] += shift
-                        changed = True
                         max_shift_applied = max(max_shift_applied, abs(shift))
 
             # --- Topological Insertion (Stagnation Break) ---
-            if max_demand > 1e-4:
-                # If we are stuck, start counting
-                if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
-                    stagnation_counter += 1
-                else:
-                    stagnation_counter = 0
+            if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
+                stagnation_counter += 1
             else:
                 stagnation_counter = 0
 
-            if stagnation_counter > 50:
+            if stagnation_counter > 50 or max_shift_applied < 1e-12:
                 # Bisect the most stressed cell
                 new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
                 self.mesh.insert(stiff_cell_idx + 1, new_pt)
                 is_fixed.insert(stiff_cell_idx + 1, False)
 
-                changed = True
                 stagnation_counter = 0
                 logger.debug(f"Iterative Relaxation Fast: Splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
 
