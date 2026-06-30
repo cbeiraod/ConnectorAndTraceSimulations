@@ -384,6 +384,37 @@ class TestFDTDMesher1DIntegration:
         # Ensure it successfully expanded up to max_res
         assert any(pytest.approx(val, abs=1e-2) == 2.0 for val in mesher.dx), "Mesh failed to scale up to max_res"
 
+    def test_segment_uniform_ignores_global_ratio(self):
+        """Tests that segment_uniform intentionally ignores ratio jumps across fixed point boundaries."""
+        # The ratio between the 10.0 gap and the 0.1 gap is 100x (violating a ratio of 1.5)
+        fixed = [0.0, 10.0, 10.1]
+        mesher = FDTDMesher1D(fixed, optional_points=[], max_res=2.0, ratio=1.5)
+        final_mesh = mesher.generate(algorithm="segment_uniform")
+
+        # Segment 1 (0 to 10): size 10, max_res 2 -> N=5. Steps of 2.0.
+        # Segment 2 (10 to 10.1): size 0.1, max_res 2 -> N=1. Step of 0.1.
+        assert final_mesh == pytest.approx([0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 10.1])
+
+        # check_mesh_validity handles skipping the ratio check for this algorithm
+        check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm="segment_uniform")
+
+    def test_segment_uniform_right_side_snap_rejection(self):
+        """Tests that an optional point is rejected if snapping to it violates constraints on the right side."""
+        # Fixed domain of 3.0. Target step is 1.5. Candidate point is 1.5.
+        fixed = [0.0, 3.0]
+
+        # Optional point is at 1.3.
+        # Left gap becomes 1.3 (Valid, < 1.6).
+        # Right gap becomes 3.0 - 1.3 = 1.7.
+        # 1.7 > max_res (1.6)! The right-side check should reject this snap.
+        optional = [1.3]
+
+        mesher = FDTDMesher1D(fixed, optional_points=optional, max_res=1.6, ratio=2.0)
+        final_mesh = mesher.generate(algorithm="segment_uniform")
+
+        # If successfully rejected, the point stays exactly at the ideal candidate 1.5
+        assert final_mesh == pytest.approx([0.0, 1.5, 3.0])
+
     @pytest.mark.parametrize("algorithm", ["advancing_front", "segment_uniform"])
     def test_symmetric_non_uniform_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
