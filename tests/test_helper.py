@@ -249,30 +249,68 @@ class TestFDTDMesher1DSplitting:
     def test_evaluate_optional_snap_success(self):
         """Test snapping to a valid optional point."""
         mesher = FDTDMesher1D([0.0, 10.0], [1.05], max_res=2.0, ratio=1.5)
-        # Candidate at 1.0. Target step is 1.0. Optional point at 1.05 is within tolerance.
-        # Distance from prev_pt (0.0) is 1.05 <= 2.0 (max_res).
-        # Ratio checks pass.
-        pt = mesher._evaluate_optional_snap(candidate_pt=1.0, prev_pt=0.0, next_pt=2.0, target_step=1.0)
-        assert pt == 1.05
+        # Candidate at 1.0. Optional point at 1.05.
+        # Check from_left incrementally (no pt_ll or right bounds yet).
+        pt = mesher._evaluate_optional_snap(
+            candidate_pt=1.0,
+            pt_ll=None, pt_l=0.0, pt_r=2.0, pt_rr=None,
+            from_left=True, from_right=False
+        )
+        assert pt == pytest.approx(1.05)
 
     def test_evaluate_optional_snap_violation_max_res(self):
         """Test rejecting an optional point because it violates max_res."""
         mesher = FDTDMesher1D([0.0, 10.0], [2.1], max_res=2.0, ratio=1.5)
-        # Candidate at 1.9. prev_pt is 0.0.
-        # Optional point at 2.1 is within a tolerance of candidate (e.g. 0.2 * 1.9 = 0.38)
-        # BUT 2.1 - 0.0 = 2.1 > max_res (2.0), so it should be rejected.
-        pt = mesher._evaluate_optional_snap(candidate_pt=1.9, prev_pt=0.0, next_pt=3.8, target_step=1.9)
-        assert pt == 1.9
+        # Candidate at 1.9. pt_l is 0.0.
+        # Optional point at 2.1 would cause left gap to be 2.1 > 2.0 (max_res).
+        pt = mesher._evaluate_optional_snap(
+            candidate_pt=1.9,
+            pt_ll=None, pt_l=0.0, pt_r=3.8, pt_rr=None,
+            from_left=True, from_right=False
+        )
+        assert pt == pytest.approx(1.9)
 
     def test_evaluate_optional_snap_violation_ratio(self):
         """Test rejecting an optional point because it violates the ratio constraint."""
         # Set a strict ratio
         mesher = FDTDMesher1D([0.0, 10.0], [1.2], max_res=2.0, ratio=1.1)
-        # Candidate is 1.0, target_step is 1.0. Optional is 1.2.
-        # Distance to prev_pt (0.0) is 1.2.
-        # 1.2 > 1.0 * 1.1 (violates ratio compared to ideal uniform target_step).
-        pt = mesher._evaluate_optional_snap(candidate_pt=1.0, prev_pt=0.0, next_pt=2.0, target_step=1.0)
-        assert pt == 1.0
+        # We simulate pt_ll at -1.0, making the outer left cell (dx1) exactly 1.0.
+        # Candidate is 1.0. Optional is 1.2.
+        # If snapped, inner left cell (dx2) becomes 1.2.
+        # Ratio of dx2/dx1 = 1.2 / 1.0 = 1.2 > 1.1 (ratio constraint).
+        pt = mesher._evaluate_optional_snap(
+            candidate_pt=1.0,
+            pt_ll=-1.0, pt_l=0.0, pt_r=2.0, pt_rr=None,
+            from_left=True, from_right=False
+        )
+        assert pt == pytest.approx(1.0)
+
+    def test_evaluate_optional_snap_two_sided_success(self):
+        """Test snapping when both from_left and from_right are True, checking all bounds."""
+        mesher = FDTDMesher1D([0.0, 10.0], [5.1], max_res=5.0, ratio=1.5)
+        # Setup perfectly uniform background cells of size 2.5.
+        # Candidate at 5.0. Optional at 5.1.
+        # New inner cells will be 2.6 and 2.4.
+        # Cascading ratios will be 2.6/2.5=1.04 and 2.5/2.4=1.04 (both well within 1.5).
+        pt = mesher._evaluate_optional_snap(
+            candidate_pt=5.0,
+            pt_ll=0.0, pt_l=2.5, pt_r=7.5, pt_rr=10.0,
+            from_left=True, from_right=True
+        )
+        assert pt == pytest.approx(5.1)
+
+    def test_evaluate_optional_snap_picks_closest(self):
+        """Test that given multiple valid optional points, the closest to candidate_pt is chosen."""
+        mesher = FDTDMesher1D([1.0, 9.0], [4.5, 4.9, 5.2, 5.8], max_res=5.0, ratio=1.5)
+        # Candidate at 5.0.
+        # 4.9 is distance 0.1, 5.2 is distance 0.2. It should aggressively pick 4.9.
+        pt = mesher._evaluate_optional_snap(
+            candidate_pt=5.0,
+            pt_ll=None, pt_l=1.0, pt_r=9.0, pt_rr=None,
+            from_left=True, from_right=True
+        )
+        assert pt == pytest.approx(4.9)
+
 
     def test_split_unforced_cell_no_optional(self):
         """Test Case A: Evenly splitting an oversized cell with no forces."""
