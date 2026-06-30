@@ -237,12 +237,15 @@ def check_mesh_validity(mesh, fixed_points, max_res, ratio, algorithm="advancing
     """Helper function to assert a mesh respects all fundamental FDTD constraints."""
     assert mesh is not None, "Mesh generation failed (returned None)."
 
-    algorithm_no_ratio = [
-        "segment_uniform"
-    ]
-
     algorithm_no_fixed_points = [
         "global_grid_search"
+    ]
+
+    algorithm_no_max_res = [
+    ]
+
+    algorithm_no_ratio = [
+        "segment_uniform"
     ]
 
     # 1. All fixed points must be present
@@ -257,8 +260,9 @@ def check_mesh_validity(mesh, fixed_points, max_res, ratio, algorithm="advancing
     dx = [mesh[i+1] - mesh[i] for i in range(len(mesh)-1)]
 
     # 3. max_res constraint
-    for i, size in enumerate(dx):
-        assert size <= max_res + 1e-9, f"Cell {i} size {size} exceeds max_res {max_res}."
+    if algorithm not in algorithm_no_max_res:
+        for i, size in enumerate(dx):
+            assert size <= max_res + 1e-9, f"Cell {i} size {size} exceeds max_res {max_res}."
 
     # 4. ratio constraint
     if algorithm not in algorithm_no_ratio:
