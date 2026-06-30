@@ -4,6 +4,8 @@ import math
 
 
 class FDTDMesher1D:
+    algorithms = ["advancing_front", "simple_uniform"]
+
     def __init__(self, fixed_points: list[float], optional_points: list[float], max_res: float, ratio: float):
         """
         Initializes the mesher, cleans up the inputs (sorting, removing duplicates,
@@ -65,7 +67,23 @@ class FDTDMesher1D:
         self.dx = self._get_cell_sizes()
         self._force_left, self._force_right = self._calculate_forces()
 
-    def generate(self, max_iterations: int = 2000) -> list[float]:
+    def generate(self, algorithm: str = "advancing_front", max_iterations: int = 2000, **kwargs) -> list[float]:
+        """
+        The main orchestrator loop.
+        Calls the helper methods below until no forces exist and no cells > max_res.
+        """
+        if algorithm not in self.algorithms:
+            raise RuntimeError(f"Unknown algorithm: {algorithm}")
+
+        if algorithm == "advancing_front":
+            return self._advancing_front(max_iterations=max_iterations)
+        else:
+            return self.mesh
+
+    def _simple_uniform(self):
+        pass
+
+    def _advancing_front(self, max_iterations: int = 2000) -> list[float]:
         """
         The main orchestrator loop.
         Calls the helper methods below until no forces exist and no cells > max_res.
