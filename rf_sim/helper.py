@@ -1,7 +1,9 @@
 from typing import List
+import logging
 import random
 import math
 
+logger = logging.getLogger(__name__)
 
 class FDTDMesher1D:
     algorithms = ["advancing_front", "segment_uniform", "segment_graded", "global_grid_search"]
@@ -252,41 +254,20 @@ class FDTDMesher1D:
         if iters >= max_iterations:
             raise RuntimeError(f"segment_graded failed to converge after {max_iterations} iterations.")
 
-        # Generate the final points based on the stabilized N array
-        new_mesh = []
+        # Temporarily ensure self.mesh only contains fixed points for _tesselate_mesh_cell reference
+        self.mesh = self.fixed_points.copy()
+
+        new_mesh = [self.fixed_points[0]]
         for i in range(S):
-            X = self.fixed_points[i]
-            Y = self.fixed_points[i+1]
-            new_mesh.append(X)
-
-            n_cells = N[i]
-            if n_cells > 1:
-                step = sizes[i] / n_cells
-                for k in range(1, n_cells):
-                    candidate_pt = X + k * step
-                    new_mesh.append(candidate_pt)
-
-        new_mesh.append(self.fixed_points[-1])
-
-        if snap_to_optional:
-            for idx in range(len(new_mesh)):
-                pt_ll = new_mesh[idx-2] if idx > 1 else None
-                pt_l  = new_mesh[idx-1] if idx > 0 else None
-                pt_r  = new_mesh[idx+1] if idx < len(new_mesh)-1 else None
-                pt_rr = new_mesh[idx+2] if idx < len(new_mesh)-2 else None
-
-                snapped_pt = self._evaluate_optional_snap(
-                    candidate_pt=new_mesh[idx],
-                    pt_ll=pt_ll,
-                    pt_l=pt_l,
-                    pt_r=pt_r,
-                    pt_rr=pt_rr,
-                    from_left = True,
-                    from_right = True,
-                )
-
-                if snapped_pt != new_mesh[idx]:
-                    new_mesh[idx] = snapped_pt
+            inner_points = self._tesselate_mesh_cell(
+                cell_index=i,
+                N=N[i],
+                snap_opt=snap_to_optional,
+                include_left=True,
+                include_right=True,
+            )
+            new_mesh.extend(inner_points)
+            new_mesh.append(self.fixed_points[i+1])
 
         self.mesh = new_mesh
 
@@ -300,46 +281,21 @@ class FDTDMesher1D:
         Ignores the global ratio constraint, ensuring algorithmic stability.
         Accepts **kwargs to safely swallow unexpected parameters.
         """
-        new_mesh = []
+        # Temporarily ensure self.mesh only contains fixed points for _tesselate_mesh_cell reference
+        self.mesh = self.fixed_points.copy()
 
+        new_mesh = [self.fixed_points[0]]
         for i in range(len(self.fixed_points) - 1):
-            X = self.fixed_points[i]
-            Y = self.fixed_points[i+1]
-
-            # Add the left boundary of the segment
-            new_mesh.append(X)
-
-            size = Y - X
+            size = self.fixed_points[i+1] - self.fixed_points[i]
             N = math.ceil(size / self.max_res)
 
-            if N > 1:
-                step = size / N
-                for k in range(1, N):
-                    candidate_pt = X + k * step
-                    new_mesh.append(candidate_pt)
-
-        # Append the final boundary point
-        new_mesh.append(self.fixed_points[-1])
-
-        if snap_to_optional:
-            for idx in range(len(new_mesh)):
-                pt_ll = new_mesh[idx-2] if idx > 1 else None
-                pt_l  = new_mesh[idx-1] if idx > 0 else None
-                pt_r  = new_mesh[idx+1] if idx < len(new_mesh)-1 else None
-                pt_rr = new_mesh[idx+2] if idx < len(new_mesh)-2 else None
-
-                snapped_pt = self._evaluate_optional_snap(
-                    candidate_pt=new_mesh[idx],
-                    pt_ll=pt_ll,
-                    pt_l=pt_l,
-                    pt_r=pt_r,
-                    pt_rr=pt_rr,
-                    from_left = True,
-                    from_right = True,
-                )
-
-                if snapped_pt != new_mesh[idx]:
-                    new_mesh[idx] = snapped_pt
+            inner_points = self._tesselate_mesh_cell(
+                cell_index=i,
+                N=N,
+                snap_opt=snap_to_optional,
+            )
+            new_mesh.extend(inner_points)
+            new_mesh.append(self.fixed_points[i+1])
 
         self.mesh = new_mesh
 
@@ -496,6 +452,7 @@ class FDTDMesher1D:
         Checks if a candidate point can be safely moved to an optional point
         without violating ratio or max_res constraints.
         """
+        logger.debug(f"FDTDMesher1D:_evaluate_optional_snap(candidate_pt={candidate_pt}, pt_ll={pt_ll}, pt_l={pt_l}, pt_r={pt_r}, pt_rr={pt_rr}, from_left={from_left}, from_right={from_right})")
         # Simple tolerance window for now (e.g., +/- 20% of the target step)
         best_opt = candidate_pt
         min_dist = pt_r - pt_l + 1e-9
@@ -535,32 +492,73 @@ class FDTDMesher1D:
 
                 best_opt = opt
 
+        logger.debug(f"FDTDMesher1D:_evaluate_optional_snap(...) -> best_opt={best_opt}")
         return best_opt
 
-    def _tesselate_mesh_cell(self, cell_index: int, N: int, snap_opt: bool = True, graded_left: bool = False, graded_right: bool = False) -> list[float]:
+    def _tesselate_mesh_cell(self, cell_index: int, N: int, snap_opt: bool = True, graded_left: bool = False, graded_right: bool = False, include_left: bool = False, include_right: bool = False) -> list[float]:
+        """
+        Subdivides a specific mesh cell into N smaller cells.
+
+        This method replaces the manual looping previously scattered across the meshing
+        algorithms. It generates internal points for the cell and attempts to snap them
+        to optional points while strictly respecting max_res and ratio constraints.
+
+        Args:
+            cell_index: The index of the cell in self.mesh to split.
+            N: The number of sub-cells to create.
+            snap_opt: Whether to attempt snapping internal points to optional points.
+            graded_left: Placeholder for future geometric grading from the left boundary.
+            graded_right: Placeholder for future geometric grading from the right boundary.
+            include_left: Include the left cell for the left-left evaluation of the leftmost edge.
+            include_rightt: Include the right cell for the right-right evaluation of the rightmost edge.
+
+        Returns:
+            A list of the new internal points (excluding the existing cell boundaries).
+        """
         if N <= 1:
             return []
 
         X = self.mesh[cell_index]
         Y = self.mesh[cell_index + 1]
-        size = Y - X
 
-        target_step = size / N
-        new_points = []
+        if graded_left or graded_right:
+            raise NotImplementedError("Graded tesselation logic is not yet implemented.")
 
-        for k in range(1, N):
-            candidate_pt = X + k * target_step
-            new_points.append(candidate_pt)
+        target_step = (Y - X) / N
+        new_points = [X + k * target_step for k in range(1, N)]
 
         if snap_opt:
             for idx in range(len(new_points)):
-                # TODO: If graded left or graded right, we need to completely change the approach
-                # We need to initially create the mesh with grading and then to get pt_ll and pt_rr
-                # we need to evaluate the adjacent cell size too
-                pt_ll = new_points[idx-2] if idx > 1 else (None if idx == 1 else X)
-                pt_l  = new_points[idx-1] if idx > 0 else X
-                pt_r  = new_points[idx+1] if idx < len(new_points)-1 else Y
-                pt_rr = new_points[idx+2] if idx < len(new_points)-2 else (None if idx == len(new_points)-2 else Y)
+                # Carefully resolve the 4 surrounding points for the constraint check
+                # We pull from self.mesh to accurately evaluate edges outside this sub-cell
+
+                # Left-Left (pt_ll):
+                if idx > 1:
+                    pt_ll = new_points[idx-2]
+                elif idx == 1:
+                    pt_ll = X
+                else: # idx == 0
+                    if graded_left or include_left:
+                        pt_ll = self.mesh[cell_index-1] if cell_index > 0 else None
+                    else:
+                        pt_ll = None
+
+                # Left (pt_l):
+                pt_l = new_points[idx-1] if idx > 0 else X
+
+                # Right (pt_r):
+                pt_r = new_points[idx+1] if idx < len(new_points)-1 else Y
+
+                # Right-Right (pt_rr):
+                if idx < len(new_points)-2:
+                    pt_rr = new_points[idx+2]
+                elif idx == len(new_points)-2:
+                    pt_rr = Y
+                else: # idx == len(new_points)-1
+                    if graded_right or include_right:
+                        pt_rr = self.mesh[cell_index+2] if cell_index < len(self.mesh)-2 else None
+                    else:
+                        pt_rr = None
 
                 snapped_pt = self._evaluate_optional_snap(
                     candidate_pt=new_points[idx],
@@ -568,15 +566,16 @@ class FDTDMesher1D:
                     pt_l=pt_l,
                     pt_r=pt_r,
                     pt_rr=pt_rr,
-                    from_left = True,
-                    from_right = True,
+                    from_left=True,
+                    from_right=True,
                 )
 
-                if snapped_point != new_points[idx]:
-                    new_points[idx] = snapped_point
+                if snapped_pt != new_points[idx]:
+                    new_points[idx] = snapped_pt
 
         #self.mesh = self.mesh[:target_idx + 1] + new_points + self.mesh[target_idx + 1:]
         return new_points
+
 
     def _split_unforced_cell(self, cell_index: int) -> list[float]:
         """
@@ -628,7 +627,7 @@ class FDTDMesher1D:
 
             if fl == 0.0 and fr == 0.0:
                 # Forces exhausted, but gap remains. Apply Case A on the remainder.
-                N = math.ceil(G / self.max_res)
+                #N = math.ceil(G / self.max_res)
                 #new_points = self._tesselate_mesh_cell(
                 #    cell_index = cell_index,
                 #    N = N,
@@ -637,20 +636,35 @@ class FDTDMesher1D:
                 #    graded_right = False
                 #)
 
-                new_points = []
                 N = math.ceil(G / self.max_res)
                 if N > 1:
                     step = G / N
-                    for k in range(1, N):
-                        candidate_pt = cur_X + k * step
-                        new_points.append(candidate_pt)
+                    new_points = [cur_X + k * step for k in range(1, N)]
 
                     for idx in range(len(new_points)):
-                        # TODO: The Nones below are wrong... we really need to pickup from the sides... we need to refactor this method, it is too long and complex as is
+                        # Look back to pts_left or prev_X, and look ahead to pts_right or cur_Y
+                        # Left-Left (pt_ll)
                         pt_ll = new_points[idx-2] if idx > 1 else (None if idx == 1 else cur_X)
-                        pt_l  = new_points[idx-1] if idx > 0 else cur_X
-                        pt_r  = new_points[idx+1] if idx < len(new_points)-1 else cur_Y
-                        pt_rr = new_points[idx+2] if idx < len(new_points)-2 else (None if idx == len(new_points)-2 else cur_Y)
+                        if idx > 1:
+                            pt_ll = new_points[idx-2]
+                        elif idx == 1:
+                            pt_ll = cur_X
+                        else:
+                            pt_ll = pts_left[-1] if len(pts_left) > 0 else prev_X
+
+                        # Left (pt_l)
+                        pt_l = new_points[idx-1] if idx > 0 else cur_X
+
+                        # Right (pt_r)
+                        pt_r = new_points[idx+1] if idx < len(new_points)-1 else cur_Y
+
+                        # Right-Right (pt_rr)
+                        if idx < len(new_points)-2:
+                            pt_rr = new_points[idx+2]
+                        elif idx == len(new_points)-2:
+                            pt_rr = cur_Y
+                        else:
+                            pt_rr = pts_right[0] if len(pts_right) > 0 else prev_Y
 
                         snapped_pt = self._evaluate_optional_snap(
                             candidate_pt=new_points[idx],
@@ -662,10 +676,10 @@ class FDTDMesher1D:
                             from_right = True,
                         )
 
-                        if snapped_point != new_points[idx]:
-                            new_points[idx] = snapped_point
+                        if snapped_pt != new_points[idx]:
+                            new_points[idx] = snapped_pt
 
-                    pts_left.expand(new_points)
+                    pts_left.extend(new_points)
                 break
 
             if fl >= fr:
