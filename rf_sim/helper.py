@@ -130,7 +130,7 @@ class FDTDMesher1D:
             # Calculate "shrink demand" (stress) for each cell
             shrink_demand = [0.0] * len(self.dx)
 
-            # True mathematical demand (no hacky 1e-9 subtraction offsets)
+            # True mathematical demand
             for j in range(len(self.dx)):
                 demand = 0.0
 
@@ -153,7 +153,6 @@ class FDTDMesher1D:
             if max_demand <= 1e-9:
                 break
 
-            stiff_cell_idx = shrink_demand.index(max_demand)
             shifts = [0.0] * len(self.mesh)
             max_shift_applied = 0.0
 
@@ -181,20 +180,27 @@ class FDTDMesher1D:
                 self.mesh[i] += shifts[i]
 
             # --- Topological Insertion (Stagnation Break) ---
-            # Evaluate if the points are moving too slowly to resolve the current demand
-            if max_shift_applied < 1e-6 or max_shift_applied < max_demand * 0.01:
+            # Evaluate if the points are moving too slowly to resolve the current demand.
+            # Using a proportional shift threshold prevents triggering stagnation
+            # while the solver is just in a naturally slow asymptotic crawl.
+            #if max_shift_applied < 1e-6 or max_shift_applied < max_demand * 0.01:
+            if max_demand > 1e-4 and max_shift_applied < max_demand * 1e-4:
                 stagnation_counter += 1
             else:
                 stagnation_counter = 0
 
-            # Inject if slowly stagnating for 50 iters, OR if strictly frozen despite active demand
-            if stagnation_counter > 50 or (max_demand > 1e-9 and max_shift_applied < 1e-12):
-                new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
-                self.mesh.insert(stiff_cell_idx + 1, new_pt)
-                is_fixed.insert(stiff_cell_idx + 1, False)
+            if stagnation_counter > 50:
+                # Find all cells identically tied for max stress (maintains perfect topological symmetry)
+                tied_indices = [i for i, d in enumerate(shrink_demand) if max_demand - d < 1e-9]
 
-                stagnation_counter = 0  # Reset the counter
-                logger.debug(f"Iterative Relaxation: Splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
+                # Reverse iteration ensures inserting points doesn't offset downstream indices!
+                for idx in reversed(tied_indices):
+                    new_pt = (self.mesh[idx] + self.mesh[idx + 1]) / 2.0
+                    self.mesh.insert(idx + 1, new_pt)
+                    is_fixed.insert(idx + 1, False)
+                    logger.debug(f"Iterative Relaxation: Splitting cell {idx}. Inserted pt: {new_pt:.4f}")
+
+                stagnation_counter = 0
 
         if iters >= max_iterations:
             raise RuntimeError(f"iterative_relaxation failed to converge after {max_iterations} iterations.")
@@ -226,9 +232,9 @@ class FDTDMesher1D:
 
     def _iterative_relaxation_fast(self, max_iterations: int = 20000, relaxation_factor: float = 0.3, snap_to_optional: bool = True, **kwargs) -> list[float]:
         """
-        An optimized iterative relaxation approach using a Sequential Update Sweep (Gauss-Seidel).
+        An optimized iterative relaxation approach using a Sequential Update Sweep (Symmetric Gauss-Seidel).
         Unlike simultaneous updates, updating points in place allows ratio shockwaves to diffuse
-        across the entire domain in a single iteration, dramatically reducing total iteration counts.
+        across the entire domain in a single iteration. Sweeping bidirectionally preserves mesh symmetry.
         """
         base_mesh = self._global_grid_search(**kwargs)
 
@@ -254,7 +260,6 @@ class FDTDMesher1D:
             self.dx = self._get_cell_sizes()
             shrink_demand = [0.0] * len(self.dx)
 
-            # True mathematical demand
             for j in range(len(self.dx)):
                 demand = 0.0
                 if self.dx[j] > self.max_res:
@@ -271,11 +276,12 @@ class FDTDMesher1D:
             if max_demand <= 1e-9:
                 break
 
-            stiff_cell_idx = shrink_demand.index(max_demand)
             max_shift_applied = 0.0
 
-            # Sequential in-place sweep (Gauss-Seidel)
-            for i in range(1, len(self.mesh) - 1):
+            # Symmetric Gauss-Seidel: Alternate left-to-right and right-to-left sweeps
+            sweep_indices = range(1, len(self.mesh) - 1) if iters % 2 == 1 else range(len(self.mesh) - 2, 0, -1)
+
+            for i in sweep_indices:
                 if is_fixed[i]: continue
 
                 # Recalculate local cell sizes dynamically (since the left neighbor might have just moved!)
@@ -317,18 +323,22 @@ class FDTDMesher1D:
                         max_shift_applied = max(max_shift_applied, abs(shift))
 
             # --- Topological Insertion (Stagnation Break) ---
-            if max_shift_applied < 1e-6 or max_shift_applied < max_demand * 0.01:
+            #if max_shift_applied < 1e-6 or max_shift_applied < max_demand * 0.01:
+            if max_demand > 1e-4 and max_shift_applied < max_demand * 1e-4:
                 stagnation_counter += 1
             else:
                 stagnation_counter = 0
 
-            if stagnation_counter > 50 or (max_demand > 1e-9 and max_shift_applied < 1e-12):
-                new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
-                self.mesh.insert(stiff_cell_idx + 1, new_pt)
-                is_fixed.insert(stiff_cell_idx + 1, False)
+            if stagnation_counter > 50:
+                tied_indices = [i for i, d in enumerate(shrink_demand) if max_demand - d < 1e-9]
+
+                for idx in reversed(tied_indices):
+                    new_pt = (self.mesh[idx] + self.mesh[idx + 1]) / 2.0
+                    self.mesh.insert(idx + 1, new_pt)
+                    is_fixed.insert(idx + 1, False)
+                    logger.debug(f"Iterative Relaxation Fast: Splitting cell {idx}. Inserted pt: {new_pt:.4f}")
 
                 stagnation_counter = 0
-                logger.debug(f"Iterative Relaxation Fast: Splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
 
         if iters >= max_iterations:
             raise RuntimeError(f"iterative_relaxation_fast failed to converge after {max_iterations} iterations.")
