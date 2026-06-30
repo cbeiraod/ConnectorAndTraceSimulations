@@ -148,41 +148,23 @@ class FDTDMesher1D:
                             min_op_dist = dist
                             best_op = op
 
-                # Helper function to cleanly evaluate constraints for a candidate point
-                def is_compatible(candidate_pt: float) -> bool:
-                    dx1 = test_mesh[i-1] - test_mesh[i-2] if i >= 2 else None
-                    dx2 = candidate_pt - test_mesh[i-1]
-                    dx3 = right_bound - candidate_pt
-                    dx4 = grid[i+2] - right_bound if i <= N - 2 else None
-
-                    compatible = True
-
-                    # Check max_res for immediate cells
-                    if dx2 > self.max_res + 1e-9: compatible = False
-                    if dx3 > self.max_res + 1e-9: compatible = False
-
-                    # Check ratio cascading constraints across the 4 cells
-                    if compatible and dx1 is not None:
-                        if dx1 > dx2 * self.ratio + 1e-9 or dx2 > dx1 * self.ratio + 1e-9: compatible = False
-                    if compatible:
-                        if dx2 > dx3 * self.ratio + 1e-9 or dx3 > dx2 * self.ratio + 1e-9: compatible = False
-                    if compatible and dx4 is not None:
-                        if dx3 > dx4 * self.ratio + 1e-9 or dx4 > dx3 * self.ratio + 1e-9: compatible = False
-
-                    return compatible
+                pt_ll = test_mesh[i-2] if i >= 2 else None
+                pt_l = test_mesh[i-1]
+                pt_r = right_bound
+                pt_rr = grid[i+2] if i <= N - 2 else None
 
                 original_val = test_mesh[i]
                 substituted = False
 
                 # 1. Attempt to snap to the closest fixed point
-                if best_fp is not None and is_compatible(best_fp):
+                if best_fp is not None and self._is_point_compatible(best_fp, pt_ll, pt_l, pt_r, pt_rr):
                     test_mesh[i] = best_fp
                     score += 1
                     total_dist += min_dist
                     substituted = True
 
                 # 2. If no valid fixed point, attempt to snap to the closest optional point
-                if not substituted and best_op is not None and is_compatible(best_op):
+                if not substituted and best_op is not None and self._is_point_compatible(best_op, pt_ll, pt_l, pt_r, pt_rr):
                     test_mesh[i] = best_op
                     opt_score += 1
                     substituted = True
@@ -486,6 +468,33 @@ class FDTDMesher1D:
     # =============================
     # Geometric & Splitting Methods
     # =============================
+
+    def _is_point_compatible(self, candidate_pt: float, pt_ll: float | None, pt_l: float | None, pt_r: float | None, pt_rr: float | None) -> bool:
+        """
+        Evaluates if placing a point at `candidate_pt` satisfies max_res and ratio constraints
+        relative to up to 4 surrounding points (defining up to 4 adjacent cells).
+        Points can be None if the mesh is being built incrementally and those bounds don't exist yet.
+        """
+        dx1 = pt_l - pt_ll if (pt_l is not None and pt_ll is not None) else None
+        dx2 = candidate_pt - pt_l if pt_l is not None else None
+        dx3 = pt_r - candidate_pt if pt_r is not None else None
+        dx4 = pt_rr - pt_r if (pt_r is not None and pt_rr is not None) else None
+
+        compatible = True
+
+        # Check max_res for immediate cells
+        if dx2 is not None and dx2 > self.max_res + 1e-9: compatible = False
+        if dx3 is not None and dx3 > self.max_res + 1e-9: compatible = False
+
+        # Check ratio cascading constraints across the 4 cells
+        if compatible and dx1 is not None and dx2 is not None:
+            if dx1 > dx2 * self.ratio + 1e-9 or dx2 > dx1 * self.ratio + 1e-9: compatible = False
+        if compatible and dx2 is not None and dx3 is not None:
+            if dx2 > dx3 * self.ratio + 1e-9 or dx3 > dx2 * self.ratio + 1e-9: compatible = False
+        if compatible and dx3 is not None and dx4 is not None:
+            if dx3 > dx4 * self.ratio + 1e-9 or dx4 > dx3 * self.ratio + 1e-9: compatible = False
+
+        return compatible
 
     def _evaluate_optional_snap(self, candidate_pt: float, prev_pt: float, next_pt: float, target_step: float, from_left: bool = True, from_right: bool = False) -> float:
         """
