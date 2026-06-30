@@ -4,7 +4,7 @@ import math
 
 
 class FDTDMesher1D:
-    algorithms = ["advancing_front", "segment_uniform", "segment_graded"]
+    algorithms = ["advancing_front", "segment_uniform", "segment_graded", "global_grid_search"]
 
     def __init__(self, fixed_points: list[float], optional_points: list[float], max_res: float, ratio: float):
         """
@@ -81,10 +81,104 @@ class FDTDMesher1D:
             return self._segment_uniform(**kwargs)
         elif algorithm == "segment_graded":
             return self._segment_graded(**kwargs)
-        #elif algorithm == "simple_uniform":
-        #    return self._simple_uniform(**kwargs)
+        elif algorithm == "global_grid_search":
+            return self._global_grid_search(**kwargs)
         else:
             return self.mesh
+
+    def _global_grid_search(self, min_test_cell_ratio: float = 0.6, **kwargs) -> list[float]:
+        """
+        A global grid search algorithm that evaluates uniform grids of varying resolutions.
+        It searches from `min_cells` to `max_cells` to find the base grid that maximizes
+        the number of 'compatible' fixed points.
+
+        Compatibility is defined as being able to snap a uniform grid edge to a fixed point
+        without violating the max_res or ratio constraints for the 4 surrounding cells
+        (the cells immediately left and right of the edge, and their adjacent neighbors).
+        """
+        domain = self._max_val - self._min_val
+        if domain <= 0:
+            return self.mesh
+
+        min_cells = max(1, math.ceil(domain / self.max_res))
+        max_cells = max(min_cells, math.ceil(domain / (self.max_res * min_test_cell_ratio)))
+
+        best_N = min_cells
+        best_score = -1
+        best_mesh = []
+        best_min_dist = float('inf')
+
+        for N in range(min_cells, max_cells + 1):
+            step = domain / N
+            grid = [self._min_val + i * step for i in range(N + 1)]
+            grid[0] = self._min_val
+            grid[-1] = self._max_val
+
+            test_mesh = grid.copy()
+            score = 0
+            total_dist = 0.0
+
+            # Loop over internal grid points sequentially
+            for i in range(1, N):
+                # Bounds: left is potentially already snapped, right is original grid
+                left_bound = test_mesh[i-1]
+                right_bound = grid[i+1]
+
+                best_fp = None
+                min_dist = float('inf')
+
+                # Find the closest fixed point strictly within the surrounding cells
+                for fp in self.fixed_points[1:-1]:
+                    if left_bound < fp < right_bound:
+                        dist = abs(grid[i] - fp)
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_fp = fp
+
+                # Evaluate if substitution maintains the required constraints
+                if best_fp is not None:
+                    original_val = test_mesh[i]
+                    test_mesh[i] = best_fp
+
+                    dx1 = test_mesh[i-1] - test_mesh[i-2] if i >= 2 else None
+                    dx2 = test_mesh[i] - test_mesh[i-1]
+                    dx3 = right_bound - test_mesh[i]
+                    dx4 = grid[i+2] - right_bound if i <= N - 2 else None
+
+                    compatible = True
+
+                    # Check max_res for immediate cells
+                    if dx2 > self.max_res + 1e-9: compatible = False
+                    if dx3 > self.max_res + 1e-9: compatible = False
+
+                    # Check ratio cascading constraints across the 4 cells
+                    if compatible and dx1 is not None:
+                        if dx1 > dx2 * self.ratio + 1e-9 or dx2 > dx1 * self.ratio + 1e-9: compatible = False
+                    if compatible:
+                        if dx2 > dx3 * self.ratio + 1e-9 or dx3 > dx2 * self.ratio + 1e-9: compatible = False
+                    if compatible and dx4 is not None:
+                        if dx3 > dx4 * self.ratio + 1e-9 or dx4 > dx3 * self.ratio + 1e-9: compatible = False
+
+                    if compatible:
+                        score += 1
+                        total_dist += min_dist
+                    else:
+                        # Revert the substitution if it caused a constraint violation
+                        test_mesh[i] = original_val
+
+            # Keep the grid that successfully snapped the most fixed points
+            if score > best_score or (score == best_score and total_dist < best_min_dist):
+                best_score = score
+                best_N = N
+                best_mesh = test_mesh.copy()
+                best_min_dist = total_dist
+
+        # Fallback to segment uniform if no valid base grid exists without clashes
+        if not best_mesh:
+            return self._segment_uniform(**kwargs)
+
+        self.mesh = best_mesh
+        return self.mesh
 
     def _segment_graded(self, max_iterations: int = 2000, snap_to_optional: bool = True, **kwargs) -> list[float]:
         """
@@ -136,7 +230,7 @@ class FDTDMesher1D:
                     changed = True
 
         if iters >= max_iterations:
-            raise RuntimeError(f"segment_graded failed to converge after {max_iters} iterations.")
+            raise RuntimeError(f"segment_graded failed to converge after {max_iterations} iterations.")
 
         # Generate the final points based on the stabilized N array
         new_mesh = []
@@ -235,14 +329,6 @@ class FDTDMesher1D:
         new_mesh.append(self.fixed_points[-1])
 
         self.mesh = new_mesh
-
-        return self.mesh
-
-    def _simple_uniform(self, min_test_cell_ratio=0.6, **kwargs):
-        domain = self._max_val - self._min_val
-
-        min_cells = math.ceil(domain / self.max_res)
-        max_cells = math.ceil(domain / (self.max_res * min_test_cell_ratio))
 
         return self.mesh
 
@@ -367,6 +453,11 @@ class FDTDMesher1D:
         """
         Checks if a candidate point can be safely moved to an optional point
         without violating ratio or max_res constraints.
+
+        TODO: The snapping currently only tests 2 adjacent cells (prev and next).
+        However, moving a point affects the ratio of 4 cells (the 2 immediate cells
+        and their adjacent neighbors). This logic needs to be updated to evaluate
+        all 4 cells for a robust check.
         """
         # Simple tolerance window for now (e.g., +/- 20% of the target step)
         tolerance = 0.2 * target_step
