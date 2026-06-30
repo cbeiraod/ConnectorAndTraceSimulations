@@ -6,7 +6,7 @@ import math
 logger = logging.getLogger(__name__)
 
 class FDTDMesher1D:
-    algorithms = ["advancing_front", "segment_uniform", "segment_graded", "global_grid_search"]
+    algorithms = ["advancing_front", "segment_uniform", "segment_graded", "global_grid_search", "iterative_relaxation"]
 
     def __init__(self, fixed_points: list[float], optional_points: list[float], max_res: float, ratio: float):
         """
@@ -85,8 +85,120 @@ class FDTDMesher1D:
             return self._segment_graded(**kwargs)
         elif algorithm == "global_grid_search":
             return self._global_grid_search(**kwargs)
+        elif algorithm == "iterative_relaxation":
+            return self._iterative_relaxation(**kwargs)
         else:
             return self.mesh
+
+    def _iterative_relaxation(self, max_iterations: int = 5000, relaxation_factor: float = 0.2, snap_to_optional: bool = True, **kwargs) -> list[float]:
+        """
+        An iterative relaxation (spring) approach that guarantees all fixed points are included.
+        1. Starts with the best base grid from `_global_grid_search`.
+        2. Force-injects any missing fixed points.
+        3. Applies a spring-like relaxation to movable points to diffuse ratio/max_res violations.
+        """
+        # 1. Get base grid from global_grid_search
+        base_mesh = self._global_grid_search(**kwargs)
+
+        # 2. Inject all fixed points (if not already cleanly snapped)
+        combined_pts = base_mesh.copy()
+        for fp in self.fixed_points:
+            if not any(abs(fp - p) < 1e-9 for p in combined_pts):
+                combined_pts.append(fp)
+
+        combined_pts.sort()
+        self.mesh = combined_pts
+
+        # Tag rigid anchors (fixed points)
+        is_fixed = [False] * len(combined_pts)
+        for i, p in enumerate(combined_pts):
+            if any(abs(p - fp) < 1e-9 for fp in self.fixed_points):
+                is_fixed[i] = True
+
+        # 3. Iterative relaxation (Spring Model)
+        changed = True
+        iters = 0
+
+        while changed and iters < max_iterations:
+            changed = False
+            iters += 1
+
+            # Calculate current cell sizes
+            self.dx = self._get_cell_sizes()
+
+            # Calculate "shrink demand" (stress) for each cell
+            shrink_demand = [0.0] * len(self.dx)
+            for j in range(len(self.dx)):
+                demand = 0.0
+
+                # Stress from exceeding max_res
+                if self.dx[j] > self.max_res + 1e-9:
+                    demand += (self.dx[j] - self.max_res)
+
+                # Stress from ratio violation with left neighbor
+                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio + 1e-9:
+                    demand += (self.dx[j] - self.dx[j-1] * self.ratio)
+
+                # Stress from ratio violation with right neighbor
+                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio + 1e-9:
+                    demand += (self.dx[j] - self.dx[j+1] * self.ratio)
+
+                shrink_demand[j] = demand
+
+            shifts = [0.0] * len(self.mesh)
+
+            # Calculate net force and shift for each internal node
+            for i in range(1, len(self.mesh) - 1):
+                if is_fixed[i]:
+                    continue  # Rigid anchor, cannot move
+
+                # Net force: right cell pushing right (+) minus left cell pushing left (-)
+                force = shrink_demand[i] - shrink_demand[i-1]
+
+                if abs(force) > 1e-9:
+                    raw_shift = force * relaxation_factor
+
+                    # Prevent points from crossing or creating microscopic slivers
+                    max_left = -0.4 * self.dx[i-1]
+                    max_right = 0.4 * self.dx[i]
+
+                    shift = max(max_left, min(max_right, raw_shift))
+                    shifts[i] = shift
+
+                    if abs(shift) > 1e-6:
+                        changed = True
+
+            # Apply shifts simultaneously to prevent asymmetric bias
+            for i in range(1, len(self.mesh) - 1):
+                self.mesh[i] += shifts[i]
+
+        if iters >= max_iterations:
+            raise RuntimeError(f"iterative_relaxation failed to converge after {max_iterations} iterations.")
+
+        # 4. Optional Pass: Snap relaxed points to optional geometry
+        if snap_to_optional:
+            for i in range(1, len(self.mesh) - 1):
+                if is_fixed[i]:
+                    continue
+
+                pt_ll = self.mesh[i-2] if i >= 2 else None
+                pt_l = self.mesh[i-1]
+                pt_r = self.mesh[i+1]
+                pt_rr = self.mesh[i+2] if i <= len(self.mesh) - 3 else None
+
+                snapped = self._evaluate_optional_snap(
+                    candidate_pt=self.mesh[i],
+                    pt_ll=pt_ll,
+                    pt_l=pt_l,
+                    pt_r=pt_r,
+                    pt_rr=pt_rr,
+                    from_left=True,
+                    from_right=True
+                )
+                if snapped != self.mesh[i]:
+                    self.mesh[i] = snapped
+
+        return self.mesh
 
     def _global_grid_search(self, min_test_cell_ratio: float = 0.6, **kwargs) -> list[float]:
         """
@@ -315,7 +427,7 @@ class FDTDMesher1D:
             inner_points = self._tesselate_mesh_cell(
                 cell_index=i,
                 N=N,
-                snap_opt=snap_to_optional,
+                snap_opt=snap_to_optional
             )
             new_mesh.extend(inner_points)
             new_mesh.append(self.fixed_points[i+1])
@@ -667,7 +779,6 @@ class FDTDMesher1D:
                     for idx in range(len(new_points)):
                         # Look back to pts_left or prev_X, and look ahead to pts_right or cur_Y
                         # Left-Left (pt_ll)
-                        pt_ll = new_points[idx-2] if idx > 1 else (None if idx == 1 else cur_X)
                         if idx > 1:
                             pt_ll = new_points[idx-2]
                         elif idx == 1:
