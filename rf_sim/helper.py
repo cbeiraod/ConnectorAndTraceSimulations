@@ -4,7 +4,7 @@ import math
 
 
 class FDTDMesher1D:
-    algorithms = ["advancing_front", "segment_uniform"]
+    algorithms = ["advancing_front", "segment_uniform", "segment_graded"]
 
     def __init__(self, fixed_points: list[float], optional_points: list[float], max_res: float, ratio: float):
         """
@@ -56,6 +56,7 @@ class FDTDMesher1D:
         self._fixed_points = fixed
         self._min_val = min_val
         self._max_val = max_val
+        self.mesh = fixed
 
     @property
     def mesh(self):
@@ -78,10 +79,117 @@ class FDTDMesher1D:
             return self._advancing_front(**kwargs)
         elif algorithm == "segment_uniform":
             return self._segment_uniform(**kwargs)
+        elif algorithm == "segment_graded":
+            return self._segment_graded(**kwargs)
         #elif algorithm == "simple_uniform":
         #    return self._simple_uniform(**kwargs)
         else:
             return self.mesh
+
+    def _segment_graded(self, max_iterations: int = 2000, snap_to_optional: bool = True, **kwargs) -> list[float]:
+        """
+        A refinement of segment_uniform that enforces the global ratio constraint.
+        It determines the required number of cells for each segment independently,
+        then iteratively propagates ratio constraints across segment boundaries by
+        increasing the cell counts of neighboring segments until the entire mesh
+        satisfies the ratio.
+        """
+        S = len(self.fixed_points) - 1
+        if S == 0:
+            return self.mesh
+
+        sizes = [self.fixed_points[i+1] - self.fixed_points[i] for i in range(S)]
+
+        # Initial pass: satisfy max_res
+        N = [max(1, math.ceil(size / self.max_res)) for size in sizes]
+
+        changed = True
+        iters = 0
+
+        # Iteratively grade the segments to satisfy the ratio constraint
+        while changed and iters < max_iterations:
+            changed = False
+            iters += 1
+
+            # Forward pass
+            for i in range(S - 1):
+                dx_left = sizes[i] / N[i]
+                dx_right = sizes[i+1] / N[i+1]
+
+                if dx_left > dx_right * self.ratio + 1e-9:
+                    N[i] = math.ceil(sizes[i] / (dx_right * self.ratio))
+                    changed = True
+                elif dx_right > dx_left * self.ratio + 1e-9:
+                    N[i+1] = math.ceil(sizes[i+1] / (dx_left * self.ratio))
+                    changed = True
+
+            # Backward pass (accelerates convergence across the domain)
+            for i in range(S - 2, -1, -1):
+                dx_left = sizes[i] / N[i]
+                dx_right = sizes[i+1] / N[i+1]
+
+                if dx_right > dx_left * self.ratio + 1e-9:
+                    N[i+1] = math.ceil(sizes[i+1] / (dx_left * self.ratio))
+                    changed = True
+                elif dx_left > dx_right * self.ratio + 1e-9:
+                    N[i] = math.ceil(sizes[i] / (dx_right * self.ratio))
+                    changed = True
+
+        if iters >= max_iterations:
+            raise RuntimeError(f"segment_graded failed to converge after {max_iters} iterations.")
+
+        # Generate the final points based on the stabilized N array
+        new_mesh = []
+        for i in range(S):
+            X = self.fixed_points[i]
+            Y = self.fixed_points[i+1]
+            new_mesh.append(X)
+
+            n_cells = N[i]
+            if n_cells > 1:
+                step = sizes[i] / n_cells
+                for k in range(1, n_cells):
+                    candidate_pt = X + k * step
+
+                    if snap_to_optional:
+                        prev_bound = new_mesh[-1]
+                        next_bound = candidate_pt + step if k < n_cells - 1 else Y
+
+                        snapped_pt = self._evaluate_optional_snap(
+                            candidate_pt=candidate_pt,
+                            prev_pt=prev_bound,
+                            next_pt=next_bound,
+                            target_step=step,
+                            from_left=True,
+                            from_right=True
+                        )
+
+                        # Safeguard: if this is the very last point in the segment,
+                        # snapping it might ruin the balanced ratio with the NEXT segment.
+                        if k == n_cells - 1 and i < S - 1:
+                            dx_next_seg = sizes[i+1] / N[i+1]
+                            dist_to_Y = Y - snapped_pt
+                            if dist_to_Y > dx_next_seg * self.ratio + 1e-9 or \
+                               dist_to_Y < dx_next_seg / self.ratio - 1e-9:
+                                snapped_pt = candidate_pt # Revert snap to guarantee ratio
+
+                        # Safeguard: same for the very first point and the PREVIOUS segment.
+                        if k == 1 and i > 0:
+                            dx_prev_seg = sizes[i-1] / N[i-1]
+                            dist_from_X = snapped_pt - X
+                            if dist_from_X > dx_prev_seg * self.ratio + 1e-9 or \
+                               dist_from_X < dx_prev_seg / self.ratio - 1e-9:
+                                snapped_pt = candidate_pt # Revert snap
+
+                        new_mesh.append(snapped_pt)
+                    else:
+                        new_mesh.append(candidate_pt)
+
+        new_mesh.append(self.fixed_points[-1])
+
+        self.mesh = new_mesh
+
+        return self.mesh
 
     def _segment_uniform(self, snap_to_optional: bool = True, **kwargs) -> list[float]:
         """
@@ -126,7 +234,9 @@ class FDTDMesher1D:
         # Append the final boundary point
         new_mesh.append(self.fixed_points[-1])
 
-        return new_mesh
+        self.mesh = new_mesh
+
+        return self.mesh
 
     def _simple_uniform(self, min_test_cell_ratio=0.6, **kwargs):
         domain = self._max_val - self._min_val
