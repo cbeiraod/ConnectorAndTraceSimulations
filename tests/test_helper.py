@@ -730,6 +730,51 @@ class TestFDTDMesher1DIntegration:
         assert len(mesh) >= len(fixed_points)
         check_mesh_validity(mesh, fixed_points, max_res=max_res, ratio=ratio, algorithm=algorithm)
 
+    @pytest.mark.parametrize("algorithm", [
+        "iterative_relaxation",
+        "iterative_relaxation_fast"
+    ])
+    def test_iterative_relaxation_stagnation_injection(self, algorithm):
+        """Test that the stagnation detector successfully injects points to resolve impossible ratio shocks."""
+        fixed = [0.0, 10.0, 10.1]
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
+
+        # Without topological injection, this setup creates an infinite spring loop.
+        # It should complete successfully and the resulting mesh size should be larger
+        # than what a pure uniform base grid search would generate (7 points).
+        final_mesh = mesher.generate(algorithm)
+
+        check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm=algorithm)
+        assert len(final_mesh) > 7, "Mesh did not inject new points to break stagnation."
+
+    @pytest.mark.parametrize("algorithm", [
+        "iterative_relaxation",
+        "iterative_relaxation_fast"
+    ])
+    def test_iterative_relaxation_anchor_rigidity(self, algorithm):
+        """Test that fixed points (anchors) do not drift during spring relaxation."""
+        # Use an irrational-like repeating float to ensure precision doesn't drift
+        fixed = [0.0, 3.33333333333, 10.0]
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
+        final_mesh = mesher.generate(algorithm)
+
+        # Check exact floating point equality (not just pytest.approx) to ensure zero drift
+        for fp in fixed:
+            assert fp in final_mesh, f"Fixed anchor {fp} drifted during relaxation!"
+
+    @pytest.mark.parametrize("algorithm", [
+        "iterative_relaxation",
+        "iterative_relaxation_fast"
+    ])
+    def test_iterative_relaxation_graceful_timeout(self, algorithm):
+        """Test that the algorithm throws a RuntimeError instead of infinite looping if starved of iterations."""
+        fixed = [0.0, 10.0, 10.1]
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
+
+        with pytest.raises(RuntimeError, match="failed to converge"):
+            # Provide an impossibly small iteration limit so it aborts cleanly
+            mesher.generate(algorithm, max_iterations=5)
+
 
 def test_openems_native_mesher_fails_constraints():
     """
