@@ -6,7 +6,7 @@ import math
 logger = logging.getLogger(__name__)
 
 class FDTDMesher1D:
-    algorithms = ["advancing_front", "segment_uniform", "segment_graded", "global_grid_search", "iterative_relaxation"]
+    algorithms = ["advancing_front", "segment_uniform", "segment_graded", "global_grid_search", "iterative_relaxation", "iterative_relaxation_fast"]
 
     def __init__(self, fixed_points: list[float], optional_points: list[float], max_res: float, ratio: float):
         """
@@ -87,10 +87,12 @@ class FDTDMesher1D:
             return self._global_grid_search(**kwargs)
         elif algorithm == "iterative_relaxation":
             return self._iterative_relaxation(**kwargs)
+        elif algorithm == "iterative_relaxation_fast":
+            return self._iterative_relaxation_fast(**kwargs)
         else:
             return self.mesh
 
-    def _iterative_relaxation(self, max_iterations: int = 8000, relaxation_factor: float = 0.2, snap_to_optional: bool = True, **kwargs) -> list[float]:
+    def _iterative_relaxation(self, max_iterations: int = 20000, relaxation_factor: float = 0.2, snap_to_optional: bool = True, **kwargs) -> list[float]:
         """
         An iterative relaxation (spring) approach that guarantees all fixed points are included.
         1. Starts with the best base grid from `_global_grid_search`.
@@ -201,7 +203,7 @@ class FDTDMesher1D:
 
                 changed = True
                 stagnation_counter = 0  # Reset the counter
-                logger.warn(f"Iterative Relaxation: Stagnation broken by splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
+                logger.debug(f"Iterative Relaxation: Stagnation broken by splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
 
         if iters >= max_iterations:
             raise RuntimeError(f"iterative_relaxation failed to converge after {max_iterations} iterations.")
@@ -225,6 +227,136 @@ class FDTDMesher1D:
                     pt_rr=pt_rr,
                     from_left=True,
                     from_right=True
+                )
+                if snapped != self.mesh[i]:
+                    self.mesh[i] = snapped
+
+        return self.mesh
+
+    def _iterative_relaxation_fast(self, max_iterations: int = 20000, relaxation_factor: float = 0.3, snap_to_optional: bool = True, **kwargs) -> list[float]:
+        """
+        An optimized iterative relaxation approach using a Sequential Update Sweep (Gauss-Seidel).
+        Unlike simultaneous updates, updating points in place allows ratio shockwaves to diffuse
+        across the entire domain in a single iteration, dramatically reducing total iteration counts.
+        """
+        base_mesh = self._global_grid_search(**kwargs)
+
+        combined_pts = base_mesh.copy()
+        for fp in self.fixed_points:
+            if not any(abs(fp - p) < 1e-9 for p in combined_pts):
+                combined_pts.append(fp)
+
+        combined_pts.sort()
+        self.mesh = combined_pts
+
+        is_fixed = [False] * len(combined_pts)
+        for i, p in enumerate(combined_pts):
+            if any(abs(p - fp) < 1e-9 for fp in self.fixed_points):
+                is_fixed[i] = True
+
+        changed = True
+        iters = 0
+        stagnation_counter = 0
+
+        while changed and iters < max_iterations:
+            changed = False
+            iters += 1
+
+            max_shift_applied = 0.0
+            max_demand = 0.0
+            stiff_cell_idx = -1
+
+            # Sequential in-place sweep (Gauss-Seidel)
+            for i in range(1, len(self.mesh) - 1):
+                if is_fixed[i]: continue
+
+                # Recalculate local cell sizes dynamically (since the left neighbor might have just moved!)
+                dx_l = self.mesh[i] - self.mesh[i-1]
+                dx_r = self.mesh[i+1] - self.mesh[i]
+
+                # Evaluate demand on the left cell (i-1)
+                demand_l = 0.0
+                if dx_l > self.max_res + 1e-9:
+                    demand_l += (dx_l - self.max_res)
+                if i > 1:
+                    dx_ll = self.mesh[i-1] - self.mesh[i-2]
+                    if dx_l > dx_ll * self.ratio + 1e-9:
+                        demand_l += (dx_l - dx_ll * self.ratio)
+                if dx_l > dx_r * self.ratio + 1e-9:
+                    demand_l += (dx_l - dx_r * self.ratio)
+
+                # Evaluate demand on the right cell (i)
+                demand_r = 0.0
+                if dx_r > self.max_res + 1e-9:
+                    demand_r += (dx_r - self.max_res)
+                if dx_r > dx_l * self.ratio + 1e-9:
+                    demand_r += (dx_r - dx_l * self.ratio)
+                if i < len(self.mesh) - 2:
+                    dx_rr = self.mesh[i+2] - self.mesh[i+1]
+                    if dx_r > dx_rr * self.ratio + 1e-9:
+                        demand_r += (dx_r - dx_rr * self.ratio)
+
+                # Track absolute max demand to feed the AMR stagnation logic
+                if demand_l > max_demand:
+                    max_demand = demand_l
+                    stiff_cell_idx = i - 1
+                if demand_r > max_demand:
+                    max_demand = demand_r
+                    stiff_cell_idx = i
+
+                force = demand_r - demand_l
+
+                if abs(force) > 1e-9:
+                    raw_shift = force * relaxation_factor
+
+                    # Prevent crossing bounds
+                    max_left = -0.4 * dx_l
+                    max_right = 0.4 * dx_r
+                    shift = max(max_left, min(max_right, raw_shift))
+
+                    if abs(shift) > 1e-6:
+                        # Update the point IN PLACE so the next iteration instantly feels it
+                        self.mesh[i] += shift
+                        changed = True
+                        max_shift_applied = max(max_shift_applied, abs(shift))
+
+            # --- Topological Insertion (Stagnation Break) ---
+            if max_demand > 1e-4:
+                # If we are stuck, start counting
+                if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
+                    stagnation_counter += 1
+                else:
+                    stagnation_counter = 0
+            else:
+                stagnation_counter = 0
+
+            if stagnation_counter > 50:
+                # Bisect the most stressed cell
+                new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
+                self.mesh.insert(stiff_cell_idx + 1, new_pt)
+                is_fixed.insert(stiff_cell_idx + 1, False)
+
+                changed = True
+                stagnation_counter = 0
+                logger.debug(f"Iterative Relaxation Fast: Splitting cell {stiff_cell_idx}. Inserted pt: {new_pt:.4f}")
+
+        if iters >= max_iterations:
+            raise RuntimeError(f"iterative_relaxation_fast failed to converge after {max_iterations} iterations.")
+
+        # Optional Pass: Snap relaxed points to optional geometry
+        if snap_to_optional:
+            for i in range(1, len(self.mesh) - 1):
+                if is_fixed[i]: continue
+
+                pt_ll = self.mesh[i-2] if i >= 2 else None
+                pt_l = self.mesh[i-1]
+                pt_r = self.mesh[i+1]
+                pt_rr = self.mesh[i+2] if i <= len(self.mesh) - 3 else None
+
+                snapped = self._evaluate_optional_snap(
+                    candidate_pt=self.mesh[i],
+                    pt_ll=pt_ll, pt_l=pt_l, pt_r=pt_r, pt_rr=pt_rr,
+                    from_left=True, from_right=True
                 )
                 if snapped != self.mesh[i]:
                     self.mesh[i] = snapped
