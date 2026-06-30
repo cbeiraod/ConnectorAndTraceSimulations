@@ -469,7 +469,7 @@ class FDTDMesher1D:
     # Geometric & Splitting Methods
     # =============================
 
-    def _is_point_compatible(self, candidate_pt: float, pt_ll: float | None, pt_l: float | None, pt_r: float | None, pt_rr: float | None) -> bool:
+    def _is_point_compatible(self, candidate_pt: float, pt_ll: float | None, pt_l: float | None, pt_r: float | None, pt_rr: float | None, do_max_res: bool = True, do_ratio: bool = True) -> bool:
         """
         Evaluates if placing a point at `candidate_pt` satisfies max_res and ratio constraints
         relative to up to 4 surrounding points (defining up to 4 adjacent cells).
@@ -483,16 +483,18 @@ class FDTDMesher1D:
         compatible = True
 
         # Check max_res for immediate cells
-        if dx2 is not None and dx2 > self.max_res + 1e-9: compatible = False
-        if dx3 is not None and dx3 > self.max_res + 1e-9: compatible = False
+        if do_max_res:
+            if dx2 is not None and dx2 > self.max_res + 1e-9: compatible = False
+            if dx3 is not None and dx3 > self.max_res + 1e-9: compatible = False
 
         # Check ratio cascading constraints across the 4 cells
-        if compatible and dx1 is not None and dx2 is not None:
-            if dx1 > dx2 * self.ratio + 1e-9 or dx2 > dx1 * self.ratio + 1e-9: compatible = False
-        if compatible and dx2 is not None and dx3 is not None:
-            if dx2 > dx3 * self.ratio + 1e-9 or dx3 > dx2 * self.ratio + 1e-9: compatible = False
-        if compatible and dx3 is not None and dx4 is not None:
-            if dx3 > dx4 * self.ratio + 1e-9 or dx4 > dx3 * self.ratio + 1e-9: compatible = False
+        if do_ratio:
+            if compatible and dx1 is not None and dx2 is not None:
+                if dx1 > dx2 * self.ratio + 1e-9 or dx2 > dx1 * self.ratio + 1e-9: compatible = False
+            if compatible and dx2 is not None and dx3 is not None:
+                if dx2 > dx3 * self.ratio + 1e-9 or dx3 > dx2 * self.ratio + 1e-9: compatible = False
+            if compatible and dx3 is not None and dx4 is not None:
+                if dx3 > dx4 * self.ratio + 1e-9 or dx4 > dx3 * self.ratio + 1e-9: compatible = False
 
         return compatible
 
