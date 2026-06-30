@@ -264,42 +264,29 @@ class FDTDMesher1D:
                 step = sizes[i] / n_cells
                 for k in range(1, n_cells):
                     candidate_pt = X + k * step
-
-                    if snap_to_optional:
-                        prev_bound = new_mesh[-1]
-                        next_bound = candidate_pt + step if k < n_cells - 1 else Y
-
-                        snapped_pt = self._evaluate_optional_snap(
-                            candidate_pt=candidate_pt,
-                            prev_pt=prev_bound,
-                            next_pt=next_bound,
-                            target_step=step,
-                            from_left=True,
-                            from_right=True
-                        )
-
-                        # Safeguard: if this is the very last point in the segment,
-                        # snapping it might ruin the balanced ratio with the NEXT segment.
-                        if k == n_cells - 1 and i < S - 1:
-                            dx_next_seg = sizes[i+1] / N[i+1]
-                            dist_to_Y = Y - snapped_pt
-                            if dist_to_Y > dx_next_seg * self.ratio + 1e-9 or \
-                               dist_to_Y < dx_next_seg / self.ratio - 1e-9:
-                                snapped_pt = candidate_pt # Revert snap to guarantee ratio
-
-                        # Safeguard: same for the very first point and the PREVIOUS segment.
-                        if k == 1 and i > 0:
-                            dx_prev_seg = sizes[i-1] / N[i-1]
-                            dist_from_X = snapped_pt - X
-                            if dist_from_X > dx_prev_seg * self.ratio + 1e-9 or \
-                               dist_from_X < dx_prev_seg / self.ratio - 1e-9:
-                                snapped_pt = candidate_pt # Revert snap
-
-                        new_mesh.append(snapped_pt)
-                    else:
-                        new_mesh.append(candidate_pt)
+                    new_mesh.append(candidate_pt)
 
         new_mesh.append(self.fixed_points[-1])
+
+        if snap_to_optional:
+            for idx in range(len(new_mesh)):
+                pt_ll = new_mesh[idx-2] if idx > 1 else None
+                pt_l  = new_mesh[idx-1] if idx > 0 else None
+                pt_r  = new_mesh[idx+1] if idx < len(new_mesh)-1 else None
+                pt_rr = new_mesh[idx+2] if idx < len(new_mesh)-2 else None
+
+                snapped_pt = self._evaluate_optional_snap(
+                    candidate_pt=new_mesh[idx],
+                    pt_ll=pt_ll,
+                    pt_l=pt_l,
+                    pt_r=pt_r,
+                    pt_rr=pt_rr,
+                    from_left = True,
+                    from_right = True,
+                )
+
+                if snapped_pt != new_mesh[idx]:
+                    new_mesh[idx] = snapped_pt
 
         self.mesh = new_mesh
 
@@ -329,24 +316,30 @@ class FDTDMesher1D:
                 step = size / N
                 for k in range(1, N):
                     candidate_pt = X + k * step
-
-                    if snap_to_optional:
-                        prev_bound = new_mesh[-1]
-                        next_bound = candidate_pt + step if k < N - 1 else Y
-                        snapped_pt = self._evaluate_optional_snap(
-                            candidate_pt=candidate_pt,
-                            prev_pt=prev_bound,
-                            next_pt=next_bound,
-                            target_step=step,
-                            from_left=True,
-                            from_right=True
-                        )
-                        new_mesh.append(snapped_pt)
-                    else:
-                        new_mesh.append(candidate_pt)
+                    new_mesh.append(candidate_pt)
 
         # Append the final boundary point
         new_mesh.append(self.fixed_points[-1])
+
+        if snap_to_optional:
+            for idx in range(len(new_mesh)):
+                pt_ll = new_mesh[idx-2] if idx > 1 else None
+                pt_l  = new_mesh[idx-1] if idx > 0 else None
+                pt_r  = new_mesh[idx+1] if idx < len(new_mesh)-1 else None
+                pt_rr = new_mesh[idx+2] if idx < len(new_mesh)-2 else None
+
+                snapped_pt = self._evaluate_optional_snap(
+                    candidate_pt=new_mesh[idx],
+                    pt_ll=pt_ll,
+                    pt_l=pt_l,
+                    pt_r=pt_r,
+                    pt_rr=pt_rr,
+                    from_left = True,
+                    from_right = True,
+                )
+
+                if snapped_pt != new_mesh[idx]:
+                    new_mesh[idx] = snapped_pt
 
         self.mesh = new_mesh
 
@@ -498,48 +491,41 @@ class FDTDMesher1D:
 
         return compatible
 
-    def _evaluate_optional_snap(self, candidate_pt: float, prev_pt: float, next_pt: float, target_step: float, from_left: bool = True, from_right: bool = False) -> float:
+    def _evaluate_optional_snap(self, candidate_pt: float, pt_ll: float | None, pt_l: float, pt_r: float, pt_rr: float | None, from_left: bool = True, from_right: bool = False) -> float:
         """
         Checks if a candidate point can be safely moved to an optional point
         without violating ratio or max_res constraints.
-
-        TODO: The snapping currently only tests 2 adjacent cells (prev and next).
-        However, moving a point affects the ratio of 4 cells (the 2 immediate cells
-        and their adjacent neighbors). This logic needs to be updated to evaluate
-        all 4 cells for a robust check.
         """
         # Simple tolerance window for now (e.g., +/- 20% of the target step)
-        tolerance = 0.2 * target_step
         best_opt = candidate_pt
-        min_dist = tolerance + 1e-9
+        min_dist = pt_r - pt_l + 1e-9
 
-        optional_points = [(p, abs(p-candidate_pt)) for p in self.optional_points if prev_pt < p < next_pt]
+        optional_points = [(p, abs(p-candidate_pt)) for p in self.optional_points if pt_l < p < pt_r]
 
         for opt, dist_to_candidate in optional_points:
             if dist_to_candidate <= min_dist:
-                dist_prev = opt - prev_pt
-                dist_next = next_pt - opt
+                min_dist = dist_to_candidate
 
-                if from_left:
-                    # Check max_res constraint
-                    if dist_prev > self.max_res + 1e-9:
+                if from_left and from_right:
+                    if not self._is_point_compatible(
+                        opt,
+                        pt_ll, pt_l, pt_r, pt_rr
+                        ):
                         continue
-
-                    # Check ratio constraint relative to the ideal target_step
-                    if dist_prev > target_step * self.ratio + 1e-9:
+                elif from_left:
+                    if not self._is_point_compatible(
+                        opt,
+                        pt_ll, pt_l, None, None
+                        ):
                         continue
-                    if dist_prev < target_step / self.ratio - 1e-9:
+                elif from_right:
+                    if not self._is_point_compatible(
+                        opt,
+                        None, None, pt_r, pt_rr
+                        ):
                         continue
-                if from_right:
-                    # Check max_res constraint
-                    if dist_next > self.max_res + 1e-9:
-                        continue
-
-                    # Check ratio constraint relative to the ideal target_step
-                    if dist_next > target_step * self.ratio + 1e-9:
-                        continue
-                    if dist_next < target_step / self.ratio - 1e-9:
-                        continue
+                #else:
+                #    pass
 
                 # TODO: Mathematical Lookahead Placeholder
                 # In the future, we need to check if taking this optional point
@@ -548,9 +534,49 @@ class FDTDMesher1D:
                 # remaining steps. If it is impossible, we should `continue`.
 
                 best_opt = opt
-                min_dist = dist_to_candidate
 
         return best_opt
+
+    def _tesselate_mesh_cell(self, cell_index: int, N: int, snap_opt: bool = True, graded_left: bool = False, graded_right: bool = False) -> list[float]:
+        if N <= 1:
+            return []
+
+        X = self.mesh[cell_index]
+        Y = self.mesh[cell_index + 1]
+        size = Y - X
+
+        target_step = size / N
+        new_points = []
+
+        for k in range(1, N):
+            candidate_pt = X + k * target_step
+            new_points.append(candidate_pt)
+
+        if snap_opt:
+            for idx in range(len(new_points)):
+                # TODO: If graded left or graded right, we need to completely change the approach
+                # We need to initially create the mesh with grading and then to get pt_ll and pt_rr
+                # we need to evaluate the adjacent cell size too
+                pt_ll = new_points[idx-2] if idx > 1 else (None if idx == 1 else X)
+                pt_l  = new_points[idx-1] if idx > 0 else X
+                pt_r  = new_points[idx+1] if idx < len(new_points)-1 else Y
+                pt_rr = new_points[idx+2] if idx < len(new_points)-2 else (None if idx == len(new_points)-2 else Y)
+
+                snapped_pt = self._evaluate_optional_snap(
+                    candidate_pt=new_points[idx],
+                    pt_ll=pt_ll,
+                    pt_l=pt_l,
+                    pt_r=pt_r,
+                    pt_rr=pt_rr,
+                    from_left = True,
+                    from_right = True,
+                )
+
+                if snapped_point != new_points[idx]:
+                    new_points[idx] = snapped_point
+
+        #self.mesh = self.mesh[:target_idx + 1] + new_points + self.mesh[target_idx + 1:]
+        return new_points
 
     def _split_unforced_cell(self, cell_index: int) -> list[float]:
         """
@@ -562,23 +588,14 @@ class FDTDMesher1D:
         size = Y - X
 
         N = math.ceil(size / self.max_res)
-        if N <= 1:
-            return []
 
-        target_step = size / N
-        new_points = []
-
-        for k in range(1, N):
-            candidate_pt = X + k * target_step
-            prev_bound = new_points[-1] if new_points else X
-
-            snapped_pt = self._evaluate_optional_snap(
-                candidate_pt=candidate_pt,
-                prev_pt=prev_bound,
-                next_pt=Y,
-                target_step=target_step
-            )
-            new_points.append(snapped_pt)
+        new_points = self._tesselate_mesh_cell(
+            cell_index = cell_index,
+            N = N,
+            snap_opt = True,
+            graded_left = False,
+            graded_right = False
+        )
 
         return new_points
 
@@ -590,6 +607,8 @@ class FDTDMesher1D:
         X = self.mesh[cell_index]
         Y = self.mesh[cell_index + 1]
 
+        prev_X = self.mesh[cell_index - 1] if cell_index > 0 else None
+        prev_Y = self.mesh[cell_index + 1] if cell_index < len(self.dx) - 1 else None
         cur_X, cur_Y = X, Y
         cur_dl = self.dx[cell_index - 1] if cell_index > 0 else None
         cur_dr = self.dx[cell_index + 1] if cell_index < len(self.dx) - 1 else None
@@ -610,19 +629,43 @@ class FDTDMesher1D:
             if fl == 0.0 and fr == 0.0:
                 # Forces exhausted, but gap remains. Apply Case A on the remainder.
                 N = math.ceil(G / self.max_res)
+                #new_points = self._tesselate_mesh_cell(
+                #    cell_index = cell_index,
+                #    N = N,
+                #    snap_opt = True,
+                #    graded_left = False,
+                #    graded_right = False
+                #)
+
+                new_points = []
+                N = math.ceil(G / self.max_res)
                 if N > 1:
                     step = G / N
                     for k in range(1, N):
                         candidate_pt = cur_X + k * step
-                        prev_bound = pts_left[-1] if k==1 and pts_left else cur_X
+                        new_points.append(candidate_pt)
+
+                    for idx in range(len(new_points)):
+                        # TODO: The Nones below are wrong... we really need to pickup from the sides... we need to refactor this method, it is too long and complex as is
+                        pt_ll = new_points[idx-2] if idx > 1 else (None if idx == 1 else cur_X)
+                        pt_l  = new_points[idx-1] if idx > 0 else cur_X
+                        pt_r  = new_points[idx+1] if idx < len(new_points)-1 else cur_Y
+                        pt_rr = new_points[idx+2] if idx < len(new_points)-2 else (None if idx == len(new_points)-2 else cur_Y)
 
                         snapped_pt = self._evaluate_optional_snap(
-                            candidate_pt=candidate_pt,
-                            prev_pt=prev_bound,
-                            next_pt=cur_Y,
-                            target_step=step
+                            candidate_pt=new_points[idx],
+                            pt_ll=pt_ll,
+                            pt_l=pt_l,
+                            pt_r=pt_r,
+                            pt_rr=pt_rr,
+                            from_left = True,
+                            from_right = True,
                         )
-                        pts_left.append(snapped_pt)
+
+                        if snapped_point != new_points[idx]:
+                            new_points[idx] = snapped_point
+
+                    pts_left.expand(new_points)
                 break
 
             if fl >= fr:
@@ -647,13 +690,16 @@ class FDTDMesher1D:
                 else:
                     # Proceed with geometric step
                     candidate_pt = cur_X + next_dl
-
                     snapped_pt = self._evaluate_optional_snap(
                         candidate_pt=candidate_pt,
-                        prev_pt=cur_X,
-                        next_pt=cur_Y,
-                        target_step=next_dl
+                        pt_ll=prev_X,
+                        pt_l=cur_X,
+                        pt_r=cur_Y,
+                        pt_rr=None,
+                        from_left = True,
+                        from_right = False,
                     )
+                    prev_X = cur_X
                     cur_X = snapped_pt
 
                     pts_left.append(cur_X)
@@ -681,12 +727,14 @@ class FDTDMesher1D:
                     candidate_pt = cur_Y - next_dr
                     snapped_pt = self._evaluate_optional_snap(
                         candidate_pt=candidate_pt,
-                        prev_pt=cur_X,
-                        next_pt=cur_Y,
-                        target_step=next_dr,
-                        from_left=False,
-                        from_right=True
+                        pt_ll=None,
+                        pt_l=cur_X,
+                        pt_r=cur_Y,
+                        pt_rr=prev_Y,
+                        from_left = False,
+                        from_right = True,
                     )
+                    prev_Y = cur_Y
                     cur_Y = snapped_pt
 
                     pts_right.insert(0, cur_Y)
