@@ -173,6 +173,79 @@ class TestFDTDMesher1DSplitting:
         # dx1 = 2.0, dx2 = 1.0. No right side. Ratio violation (2.0 > 1.5 * 1.0)
         assert mesher._is_point_compatible(3.0, pt_ll=0.0, pt_l=2.0, pt_r=None, pt_rr=None) is False
 
+    def test_tesselate_mesh_cell_trivial_N(self):
+        """Test that N<=1 correctly returns no internal points."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=10.0, ratio=1.5)
+        assert mesher._tesselate_mesh_cell(cell_index=0, N=1) == []
+        assert mesher._tesselate_mesh_cell(cell_index=0, N=0) == []
+
+    def test_tesselate_mesh_cell_uniform_no_snap(self):
+        """Test perfect uniform subdivision when snapping is disabled or not applicable."""
+        mesher = FDTDMesher1D([0.0, 10.0], [5.1], max_res=3.0, ratio=1.5)
+
+        # Split 0.0 to 10.0 into 4 cells (N=4) -> target step is 2.5
+        points = mesher._tesselate_mesh_cell(cell_index=0, N=4, snap_opt=False)
+        assert points == pytest.approx([2.5, 5.0, 7.5])
+
+    def test_tesselate_mesh_cell_with_snapping(self):
+        """Test that an internal point correctly snaps to an optional point."""
+        # Optional point at 5.1, target step is 5.0. It should snap to 5.1.
+        mesher = FDTDMesher1D([0.0, 10.0], [5.1], max_res=10.0, ratio=1.5)
+
+        points = mesher._tesselate_mesh_cell(cell_index=0, N=2, snap_opt=True)
+        assert points == pytest.approx([5.1])
+
+    def test_tesselate_mesh_cell_boundary_resolution(self):
+        """Test that resolving pt_ll and pt_rr works correctly when spanning across self.mesh boundaries."""
+        # 3 fixed points = 2 cells. We will tesselate the second cell (cell_index=1).
+        mesher = FDTDMesher1D([0.0, 10.0, 20.0], [15.1], max_res=10.0, ratio=1.5)
+
+        # Tesselating [10.0, 20.0] with N=2 means the candidate point is 15.0.
+        # It will try to snap to 15.1.
+        # This requires pt_ll to reach back into self.mesh[0] (which is 0.0).
+        # It shouldn't crash, and the snap should succeed since constraints are generous.
+        points = mesher._tesselate_mesh_cell(cell_index=1, N=2, snap_opt=True)
+        assert points == pytest.approx([15.1])
+
+    def test_tesselate_mesh_cell_not_implemented_graded(self):
+        """Test that graded flags raise the correct NotImplementedError."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=10.0, ratio=1.5)
+
+        with pytest.raises(NotImplementedError):
+            mesher._tesselate_mesh_cell(cell_index=0, N=2, graded_left=True)
+
+        with pytest.raises(NotImplementedError):
+            mesher._tesselate_mesh_cell(cell_index=0, N=2, graded_right=True)
+
+    def test_tesselate_mesh_cell_reject_snap_due_to_pt_ll_ratio(self):
+        """Test that snapping is rejected if it causes a ratio violation with the outer left cell (pt_ll)."""
+        mesher = FDTDMesher1D([0.0, 4.0, 10.0], [5.0], max_res=10.0, ratio=1.5)
+        # We manually force N=2 for the second cell (index 1: 4.0 to 10.0). Target step is 3.0.
+        # Candidate point is 4.0 + 3.0 = 7.0.
+        # If it snaps to 5.0, the inner cell (4.0 to 5.0) becomes 1.0.
+        # The outer left cell (0.0 to 4.0) is 4.0. Ratio is 4.0 > 1.5 * 1.0 (Violates pt_ll check!)
+        points = mesher._tesselate_mesh_cell(cell_index=1, N=2, snap_opt=True)
+        assert points == pytest.approx([7.0]) # Snap rejected, returns ideal candidate
+
+    def test_tesselate_mesh_cell_reject_snap_due_to_pt_rr_ratio(self):
+        """Test that snapping is rejected if it causes a ratio violation with the outer right cell (pt_rr)."""
+        mesher = FDTDMesher1D([0.0, 6.0, 10.0], [5.0], max_res=10.0, ratio=1.5)
+        # We manually force N=2 for the first cell (index 0: 0.0 to 6.0). Target step is 3.0.
+        # Candidate point is 0.0 + 3.0 = 3.0.
+        # If it snaps to 5.0, the inner cell (5.0 to 6.0) becomes 1.0.
+        # The outer right cell (6.0 to 10.0) is 4.0. Ratio is 4.0 > 1.5 * 1.0 (Violates pt_rr check!)
+        points = mesher._tesselate_mesh_cell(cell_index=0, N=2, snap_opt=True)
+        assert points == pytest.approx([3.0]) # Snap rejected, returns ideal candidate
+
+    def test_tesselate_mesh_cell_reject_snap_due_to_max_res(self):
+        """Test that snapping is rejected if it forces an internal gap to exceed max_res."""
+        mesher = FDTDMesher1D([0.0, 4.0], [3.5], max_res=2.5, ratio=5.0) # High ratio to isolate max_res
+        # Cell is size 4.0. N=2 -> step is 2.0. Candidate is 2.0.
+        # Optional point is 3.5.
+        # If it snaps to 3.5, the left gap is 3.5 - 0.0 = 3.5 (> max_res 2.5). Violation!
+        points = mesher._tesselate_mesh_cell(cell_index=0, N=2, snap_opt=True)
+        assert points == pytest.approx([2.0]) # Snap rejected, returns ideal candidate
+
     def test_evaluate_optional_snap_success(self):
         """Test snapping to a valid optional point."""
         mesher = FDTDMesher1D([0.0, 10.0], [1.05], max_res=2.0, ratio=1.5)
