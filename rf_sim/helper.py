@@ -110,11 +110,14 @@ class FDTDMesher1D:
 
                     if snap_to_optional:
                         prev_bound = new_mesh[-1]
+                        next_bound = candidate_pt + step if k != N else Y
                         snapped_pt = self._evaluate_optional_snap(
                             candidate_pt=candidate_pt,
                             prev_pt=prev_bound,
-                            next_pt=Y,
-                            target_step=step
+                            next_pt=next_bound,
+                            target_step=step,
+                            from_left=True,
+                            from_right=True
                         )
                         new_mesh.append(snapped_pt)
                     else:
