@@ -11,7 +11,8 @@ MAX_RES = 2.0
 RATIO = 1.5
 ALGORITHM = "segment_uniform"
 ALGORITHM = "segment_graded"
-ALGORITHM = "advancing_front"
+ALGORITHM = "global_grid_search"
+#ALGORITHM = "advancing_front"
 
 # =============================================================================
 # ANSI COLOR CODES (For terminal formatting)

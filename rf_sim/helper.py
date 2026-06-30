@@ -105,6 +105,7 @@ class FDTDMesher1D:
 
         best_N = min_cells
         best_score = -1
+        best_opt_score = -1
         best_mesh = []
         best_min_dist = float('inf')
 
@@ -116,6 +117,7 @@ class FDTDMesher1D:
 
             test_mesh = grid.copy()
             score = 0
+            opt_score = 0
             total_dist = 0.0
 
             # Loop over internal grid points sequentially
@@ -135,14 +137,22 @@ class FDTDMesher1D:
                             min_dist = dist
                             best_fp = fp
 
-                # Evaluate if substitution maintains the required constraints
-                if best_fp is not None:
-                    original_val = test_mesh[i]
-                    test_mesh[i] = best_fp
+                best_op = None
+                min_op_dist = float('inf')
 
+                # Find the closest optional point strictly within the surrounding cells
+                for op in self.optional_points:
+                    if left_bound < op < right_bound:
+                        dist = abs(grid[i] - op)
+                        if dist < min_op_dist:
+                            min_op_dist = dist
+                            best_op = op
+
+                # Helper function to cleanly evaluate constraints for a candidate point
+                def is_compatible(candidate_pt: float) -> bool:
                     dx1 = test_mesh[i-1] - test_mesh[i-2] if i >= 2 else None
-                    dx2 = test_mesh[i] - test_mesh[i-1]
-                    dx3 = right_bound - test_mesh[i]
+                    dx2 = candidate_pt - test_mesh[i-1]
+                    dx3 = right_bound - candidate_pt
                     dx4 = grid[i+2] - right_bound if i <= N - 2 else None
 
                     compatible = True
@@ -159,16 +169,44 @@ class FDTDMesher1D:
                     if compatible and dx4 is not None:
                         if dx3 > dx4 * self.ratio + 1e-9 or dx4 > dx3 * self.ratio + 1e-9: compatible = False
 
-                    if compatible:
-                        score += 1
-                        total_dist += min_dist
-                    else:
-                        # Revert the substitution if it caused a constraint violation
-                        test_mesh[i] = original_val
+                    return compatible
 
-            # Keep the grid that successfully snapped the most fixed points
-            if score > best_score or (score == best_score and total_dist < best_min_dist):
+                original_val = test_mesh[i]
+                substituted = False
+
+                # 1. Attempt to snap to the closest fixed point
+                if best_fp is not None and is_compatible(best_fp):
+                    test_mesh[i] = best_fp
+                    score += 1
+                    total_dist += min_dist
+                    substituted = True
+
+                # 2. If no valid fixed point, attempt to snap to the closest optional point
+                if not substituted and best_op is not None and is_compatible(best_op):
+                    test_mesh[i] = best_op
+                    opt_score += 1
+                    substituted = True
+
+                # 3. If neither can be safely snapped, revert to the uniform grid point
+                if not substituted:
+                    test_mesh[i] = original_val
+
+            # Keep the grid that successfully snapped the most fixed points.
+            # Tie-breakers:
+            # 1. Highest number of successfully snapped optional points
+            # 2. Minimum total snap distance (for fixed points only)
+            is_better = False
+            if score > best_score:
+                is_better = True
+            elif score == best_score:
+                if opt_score > best_opt_score:
+                    is_better = True
+                elif opt_score == best_opt_score and total_dist < best_min_dist:
+                    is_better = True
+
+            if is_better:
                 best_score = score
+                best_opt_score = opt_score
                 best_N = N
                 best_mesh = test_mesh.copy()
                 best_min_dist = total_dist
