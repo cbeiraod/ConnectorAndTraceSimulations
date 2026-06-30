@@ -130,27 +130,27 @@ class FDTDMesher1D:
             # Calculate "shrink demand" (stress) for each cell
             shrink_demand = [0.0] * len(self.dx)
 
-            # Incorporate the 1e-9 test tolerance directly into the demand subtraction
+            # True mathematical demand (no hacky 1e-9 subtraction offsets)
             for j in range(len(self.dx)):
                 demand = 0.0
 
                 # Stress from exceeding max_res
-                if self.dx[j] > self.max_res + 1e-9:
-                    demand += (self.dx[j] - (self.max_res + 1e-9))
+                if self.dx[j] > self.max_res:
+                    demand += (self.dx[j] - self.max_res)
 
                 # Stress from ratio violation with left neighbor
-                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio + 1e-9:
-                    demand += (self.dx[j] - (self.dx[j-1] * self.ratio + 1e-9))
+                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j-1] * self.ratio)
 
                 # Stress from ratio violation with right neighbor
-                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio + 1e-9:
-                    demand += (self.dx[j] - (self.dx[j+1] * self.ratio + 1e-9))
+                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j+1] * self.ratio)
                 shrink_demand[j] = demand
 
             max_demand = max(shrink_demand) if shrink_demand else 0.0
 
-            # Strict Mathematical Exit Condition
-            if max_demand == 0.0:
+            # Smooth Mathematical Exit Condition: Clean exit once within test tolerance
+            if max_demand <= 1e-9:
                 break
 
             stiff_cell_idx = shrink_demand.index(max_demand)
@@ -181,13 +181,14 @@ class FDTDMesher1D:
                 self.mesh[i] += shifts[i]
 
             # --- Topological Insertion (Stagnation Break) ---
-            if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
+            # Evaluate if the points are moving too slowly to resolve the current demand
+            if max_shift_applied < 1e-6 or max_shift_applied < max_demand * 0.01:
                 stagnation_counter += 1
             else:
                 stagnation_counter = 0
 
-            # Inject if slowly stagnating, OR if strictly frozen despite active demand!
-            if stagnation_counter > 50 or max_shift_applied < 1e-12:
+            # Inject if slowly stagnating for 50 iters, OR if strictly frozen despite active demand
+            if stagnation_counter > 50 or (max_demand > 1e-9 and max_shift_applied < 1e-12):
                 new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
                 self.mesh.insert(stiff_cell_idx + 1, new_pt)
                 is_fixed.insert(stiff_cell_idx + 1, False)
@@ -253,20 +254,21 @@ class FDTDMesher1D:
             self.dx = self._get_cell_sizes()
             shrink_demand = [0.0] * len(self.dx)
 
+            # True mathematical demand
             for j in range(len(self.dx)):
                 demand = 0.0
-                if self.dx[j] > self.max_res + 1e-9:
-                    demand += (self.dx[j] - (self.max_res + 1e-9))
-                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio + 1e-9:
-                    demand += (self.dx[j] - (self.dx[j-1] * self.ratio + 1e-9))
-                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio + 1e-9:
-                    demand += (self.dx[j] - (self.dx[j+1] * self.ratio + 1e-9))
+                if self.dx[j] > self.max_res:
+                    demand += (self.dx[j] - self.max_res)
+                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j-1] * self.ratio)
+                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j+1] * self.ratio)
                 shrink_demand[j] = demand
 
             max_demand = max(shrink_demand) if shrink_demand else 0.0
 
-            # Strict Mathematical Exit Condition
-            if max_demand == 0.0:
+            # Smooth Mathematical Exit Condition
+            if max_demand <= 1e-9:
                 break
 
             stiff_cell_idx = shrink_demand.index(max_demand)
@@ -282,25 +284,25 @@ class FDTDMesher1D:
 
                 # Evaluate demand on the left cell (i-1)
                 demand_l = 0.0
-                if dx_l > self.max_res + 1e-9:
-                    demand_l += (dx_l - (self.max_res + 1e-9))
+                if dx_l > self.max_res:
+                    demand_l += (dx_l - self.max_res)
                 if i > 1:
                     dx_ll = self.mesh[i-1] - self.mesh[i-2]
-                    if dx_l > dx_ll * self.ratio + 1e-9:
-                        demand_l += (dx_l - (dx_ll * self.ratio + 1e-9))
-                if dx_l > dx_r * self.ratio + 1e-9:
-                    demand_l += (dx_l - (dx_r * self.ratio + 1e-9))
+                    if dx_l > dx_ll * self.ratio:
+                        demand_l += (dx_l - dx_ll * self.ratio)
+                if dx_l > dx_r * self.ratio:
+                    demand_l += (dx_l - dx_r * self.ratio)
 
                 # Evaluate demand on the right cell (i)
                 demand_r = 0.0
-                if dx_r > self.max_res + 1e-9:
-                    demand_r += (dx_r - (self.max_res + 1e-9))
-                if dx_r > dx_l * self.ratio + 1e-9:
-                    demand_r += (dx_r - (dx_l * self.ratio + 1e-9))
+                if dx_r > self.max_res:
+                    demand_r += (dx_r - self.max_res)
+                if dx_r > dx_l * self.ratio:
+                    demand_r += (dx_r - dx_l * self.ratio)
                 if i < len(self.mesh) - 2:
                     dx_rr = self.mesh[i+2] - self.mesh[i+1]
-                    if dx_r > dx_rr * self.ratio + 1e-9:
-                        demand_r += (dx_r - (dx_rr * self.ratio + 1e-9))
+                    if dx_r > dx_rr * self.ratio:
+                        demand_r += (dx_r - dx_rr * self.ratio)
 
                 force = demand_r - demand_l
 
@@ -315,13 +317,12 @@ class FDTDMesher1D:
                         max_shift_applied = max(max_shift_applied, abs(shift))
 
             # --- Topological Insertion (Stagnation Break) ---
-            if max_shift_applied < 1e-5 or max_shift_applied < max_demand * 0.01:
+            if max_shift_applied < 1e-6 or max_shift_applied < max_demand * 0.01:
                 stagnation_counter += 1
             else:
                 stagnation_counter = 0
 
-            if stagnation_counter > 50 or max_shift_applied < 1e-12:
-                # Bisect the most stressed cell
+            if stagnation_counter > 50 or (max_demand > 1e-9 and max_shift_applied < 1e-12):
                 new_pt = (self.mesh[stiff_cell_idx] + self.mesh[stiff_cell_idx + 1]) / 2.0
                 self.mesh.insert(stiff_cell_idx + 1, new_pt)
                 is_fixed.insert(stiff_cell_idx + 1, False)
