@@ -262,12 +262,35 @@ class FDTDMesher1D:
             inner_points = self._tesselate_mesh_cell(
                 cell_index=i,
                 N=N[i],
-                snap_opt=snap_to_optional,
-                include_left=True,
-                include_right=True,
+                snap_opt=False,
             )
             new_mesh.extend(inner_points)
             new_mesh.append(self.fixed_points[i+1])
+
+        if snap_to_optional:
+            for idx in range(len(new_mesh)):
+                if idx == 0 or idx == len(new_mesh) - 1:
+                    continue
+                if new_mesh[idx] in self._fixed_points:
+                    continue
+
+                pt_ll = new_mesh[idx - 2] if idx > 1 else None
+                pt_l  = new_mesh[idx - 1]
+                pt_r  = new_mesh[idx + 1]
+                pt_rr = new_mesh[idx + 2] if idx < len(new_mesh) - 2 else None
+
+                snapped_pt = self._evaluate_optional_snap(
+                    candidate_pt = new_mesh[idx],
+                    pt_ll = pt_ll,
+                    pt_l = pt_l,
+                    pt_r = pt_r,
+                    pt_rr = pt_rr,
+                    from_left = True,
+                    from_right = True
+                )
+
+                if snapped_pt != new_mesh[idx]:
+                    new_mesh[idx] = snapped_pt
 
         self.mesh = new_mesh
 
