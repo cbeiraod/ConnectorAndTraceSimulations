@@ -127,6 +127,52 @@ class TestFDTDMesher1DState:
 
 class TestFDTDMesher1DSplitting:
 
+    def test_is_point_compatible_fully_defined_valid(self):
+        """Test compatibility with 4 well-behaved cells."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # Dxs: 1.0, 1.0, 1.0, 1.0 -> all <= 2.0, ratios = 1.0 <= 1.5
+        assert mesher._is_point_compatible(2.0, pt_ll=0.0, pt_l=1.0, pt_r=3.0, pt_rr=4.0) is True
+
+    def test_is_point_compatible_max_res_violation(self):
+        """Test rejection when max_res is exceeded on immediate cells."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # Immediate left cell (dx2) = 2.5 (>2.0)
+        assert mesher._is_point_compatible(3.5, pt_ll=0.0, pt_l=1.0, pt_r=4.5, pt_rr=5.5) is False
+        # Immediate right cell (dx3) = 2.5 (>2.0)
+        assert mesher._is_point_compatible(2.0, pt_ll=0.0, pt_l=1.0, pt_r=4.5, pt_rr=5.5) is False
+
+    def test_is_point_compatible_ratio_violation_inner(self):
+        """Test rejection when ratio is violated between the two immediate cells."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # dx2 = 0.5, dx3 = 1.0 (ratio 2.0 > 1.5)
+        assert mesher._is_point_compatible(1.5, pt_ll=0.0, pt_l=1.0, pt_r=2.5, pt_rr=3.0) is False
+        # dx2 = 1.0, dx3 = 0.5 (ratio 2.0 > 1.5)
+        assert mesher._is_point_compatible(2.0, pt_ll=0.0, pt_l=1.0, pt_r=2.5, pt_rr=3.0) is False
+
+    def test_is_point_compatible_ratio_violation_outer(self):
+        """Test rejection when ratio cascades fail on the outer adjacent cells."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # Left outer violation: dx1 = 2.0, dx2 = 1.0 (ratio 2.0 > 1.5)
+        assert mesher._is_point_compatible(3.0, pt_ll=0.0, pt_l=2.0, pt_r=4.0, pt_rr=5.0) is False
+        # Right outer violation: dx3 = 1.0, dx4 = 2.0 (ratio 2.0 > 1.5)
+        assert mesher._is_point_compatible(2.0, pt_ll=0.0, pt_l=1.0, pt_r=3.0, pt_rr=5.0) is False
+
+    def test_is_point_compatible_partial_bounds(self):
+        """Test that partial bounds (None) safely skip outer checks during incremental meshing."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+
+        # Missing left-left boundary (e.g., building from the left edge)
+        # dx2 = 1.0, dx3 = 1.0, dx4 = 2.0 (ratio dx3/dx4 = 2.0 > 1.5 -> False)
+        assert mesher._is_point_compatible(2.0, pt_ll=None, pt_l=1.0, pt_r=3.0, pt_rr=5.0) is False
+        # Valid case with missing left-left
+        assert mesher._is_point_compatible(2.0, pt_ll=None, pt_l=1.0, pt_r=3.0, pt_rr=4.0) is True
+
+        # Missing right bounds (e.g., building strictly left-to-right)
+        # dx1 = 1.0, dx2 = 1.0. No right side. Valid.
+        assert mesher._is_point_compatible(2.0, pt_ll=0.0, pt_l=1.0, pt_r=None, pt_rr=None) is True
+        # dx1 = 2.0, dx2 = 1.0. No right side. Ratio violation (2.0 > 1.5 * 1.0)
+        assert mesher._is_point_compatible(3.0, pt_ll=0.0, pt_l=2.0, pt_r=None, pt_rr=None) is False
+
     def test_evaluate_optional_snap_success(self):
         """Test snapping to a valid optional point."""
         mesher = FDTDMesher1D([0.0, 10.0], [1.05], max_res=2.0, ratio=1.5)
@@ -245,7 +291,8 @@ def check_mesh_validity(mesh, fixed_points, max_res, ratio, algorithm="advancing
     ]
 
     algorithm_no_ratio = [
-        "segment_uniform"
+        "segment_uniform",
+        "global_grid_search_with_fixed"
     ]
 
     # 1. All fixed points must be present
