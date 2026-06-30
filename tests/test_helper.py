@@ -766,6 +766,27 @@ class TestFDTDMesher1DIntegration:
         "iterative_relaxation",
         "iterative_relaxation_fast"
     ])
+    def test_iterative_relaxation_no_premature_equilibrium(self, algorithm):
+        """
+        Regression test for the 'premature equilibrium' bug.
+        Ensures the solver does not exit early when shifts become microscopically small
+        but the strict mathematical constraints are not yet fully satisfied.
+        """
+        # This setup (small max_res, very tight ratio) forces the solver into a state
+        # where the required shifts quickly drop below 1e-6. If the solver exits on
+        # small shifts instead of strictly waiting for zero demand, this will fail.
+        fixed = [0.0, 1.0, 2.1]
+        mesher = FDTDMesher1D(fixed, [], max_res=1.0, ratio=1.1)
+
+        final_mesh = mesher.generate(algorithm)
+
+        # Check validity natively enforces the 1e-9 strict mathematical tolerance
+        check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.1, algorithm=algorithm)
+
+    @pytest.mark.parametrize("algorithm", [
+        "iterative_relaxation",
+        "iterative_relaxation_fast"
+    ])
     def test_iterative_relaxation_graceful_timeout(self, algorithm):
         """Test that the algorithm throws a RuntimeError instead of infinite looping if starved of iterations."""
         fixed = [0.0, 10.0, 10.1]
