@@ -634,7 +634,7 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
-        pytest.param("iterative_relaxation_fast", marks=pytest.mark.skip(reason="WIP")),
+        #pytest.param("iterative_relaxation_fast", marks=pytest.mark.skip(reason="WIP")),
     ])
     def test_symmetric_non_uniform_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
@@ -679,10 +679,9 @@ class TestFDTDMesher1DIntegration:
         "segment_uniform",
         "segment_graded",
         "global_grid_search",
-        pytest.param("iterative_relaxation", marks=pytest.mark.skip(reason="WIP")),
-        pytest.param("iterative_relaxation_fast", marks=pytest.mark.skip(reason="WIP")),
+        pytest.param("iterative_relaxation", marks=pytest.mark.skip(reason="Known to converge with additional iterations (up to 85000)")),
     ])
-    def test_symmetric_non_uniform_example_mesh(self, algorithm):
+    def test_symmetric_non_uniform_realistic_example_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
         positive_half = [0.25, 0.45, 0.4, 0.35, 0.3, 5.0, 0.8500000000000001]
         # Reconstruct the full symmetric domain
