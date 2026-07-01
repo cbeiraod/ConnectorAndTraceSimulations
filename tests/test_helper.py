@@ -470,7 +470,9 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     @pytest.mark.parametrize("fixed_steps", [
         [0.0, 1.0, 2.1],           # cell0: max_res, cell1: 1.1 max_res
@@ -517,7 +519,9 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_simple_bisection(self, algorithm):
         """Tests the trivial case where the max_res is exactly half of the point spacing."""
@@ -534,7 +538,9 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_basic_bisection(self, algorithm):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
@@ -552,7 +558,9 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_basic_bisection_with_optional_points(self, algorithm):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
@@ -569,7 +577,9 @@ class TestFDTDMesher1DIntegration:
     @pytest.mark.parametrize("algorithm", [
         "advancing_front",
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_complex_grading_cascade(self, algorithm):
         """Tests a highly disparate domain to ensure the ratio cascades correctly without hanging."""
@@ -634,7 +644,7 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
-        #pytest.param("iterative_relaxation_fast", marks=pytest.mark.skip(reason="WIP")),
+        "iterative_relaxation_momentum"
     ])
     def test_symmetric_non_uniform_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
@@ -658,7 +668,9 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_multiple_optional_points(self, algorithm):
         """Tests the selection logic when multiple optional points are available in a gap."""
@@ -680,6 +692,7 @@ class TestFDTDMesher1DIntegration:
         "segment_graded",
         "global_grid_search",
         "iterative_relaxation",
+        "iterative_relaxation_momentum"
     ])
     def test_symmetric_non_uniform_realistic_example_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
@@ -711,6 +724,8 @@ class TestFDTDMesher1DIntegration:
         "global_grid_search",
         "iterative_relaxation",
         "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     @settings(max_examples=5, deadline=None)
     # @seed(42)  # <-- Uncomment this to globally freeze the random seed for this test
@@ -751,7 +766,9 @@ class TestFDTDMesher1DIntegration:
 
     @pytest.mark.parametrize("algorithm", [
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_iterative_relaxation_stagnation_injection(self, algorithm):
         """Test that the stagnation detector successfully injects points to resolve impossible ratio shocks."""
@@ -772,7 +789,9 @@ class TestFDTDMesher1DIntegration:
 
     @pytest.mark.parametrize("algorithm", [
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_iterative_relaxation_anchor_rigidity(self, algorithm):
         """Test that fixed points (anchors) do not drift during spring relaxation."""
@@ -787,7 +806,9 @@ class TestFDTDMesher1DIntegration:
 
     @pytest.mark.parametrize("algorithm", [
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_iterative_relaxation_no_premature_equilibrium(self, algorithm):
         """
@@ -808,7 +829,9 @@ class TestFDTDMesher1DIntegration:
 
     @pytest.mark.parametrize("algorithm", [
         "iterative_relaxation",
-        "iterative_relaxation_fast"
+        "iterative_relaxation_fast",
+        "iterative_relaxation_momentum",
+        "iterative_relaxation_fast_momentum"
     ])
     def test_iterative_relaxation_graceful_timeout(self, algorithm):
         """Test that the algorithm throws a RuntimeError instead of infinite looping if starved of iterations."""
