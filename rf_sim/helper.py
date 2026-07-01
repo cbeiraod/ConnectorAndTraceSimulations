@@ -6,7 +6,11 @@ import math
 logger = logging.getLogger(__name__)
 
 class FDTDMesher1D:
-    algorithms = ["advancing_front", "segment_uniform", "segment_graded", "global_grid_search", "iterative_relaxation", "iterative_relaxation_fast"]
+    algorithms = [
+        "advancing_front", "segment_uniform", "segment_graded", "global_grid_search",
+        "iterative_relaxation", "iterative_relaxation_fast",
+        "iterative_relaxation_momentum", "iterative_relaxation_fast_momentum"
+    ]
 
     def __init__(self, fixed_points: list[float], optional_points: list[float], max_res: float, ratio: float):
         """
@@ -89,6 +93,10 @@ class FDTDMesher1D:
             return self._iterative_relaxation(**kwargs)
         elif algorithm == "iterative_relaxation_fast":
             return self._iterative_relaxation_fast(**kwargs)
+        elif algorithm == "iterative_relaxation_momentum":
+            return self._iterative_relaxation_momentum(**kwargs)
+        elif algorithm == "iterative_relaxation_fast_momentum":
+            return self._iterative_relaxation_fast_momentum(**kwargs)
         else:
             return self.mesh
 
@@ -344,6 +352,256 @@ class FDTDMesher1D:
             raise RuntimeError(f"iterative_relaxation_fast failed to converge after {max_iterations} iterations.")
 
         # Optional Pass: Snap relaxed points to optional geometry
+        if snap_to_optional:
+            for i in range(1, len(self.mesh) - 1):
+                if is_fixed[i]: continue
+
+                pt_ll = self.mesh[i-2] if i >= 2 else None
+                pt_l = self.mesh[i-1]
+                pt_r = self.mesh[i+1]
+                pt_rr = self.mesh[i+2] if i <= len(self.mesh) - 3 else None
+
+                snapped = self._evaluate_optional_snap(
+                    candidate_pt=self.mesh[i],
+                    pt_ll=pt_ll, pt_l=pt_l, pt_r=pt_r, pt_rr=pt_rr,
+                    from_left=True, from_right=True
+                )
+                if snapped != self.mesh[i]:
+                    self.mesh[i] = snapped
+
+        return self.mesh
+
+    def _iterative_relaxation_momentum(self, max_iterations: int = 20000, relaxation_factor: float = 0.2, damping: float = 0.8, snap_to_optional: bool = True, **kwargs) -> list[float]:
+        """
+        A second-order wave equation solver (Mass-Spring-Damper).
+        Maintains a velocity for each point to overcome 'Critical Slowing Down',
+        allowing the mesh to rapidly coast into equilibrium.
+        """
+        base_mesh = self._global_grid_search(**kwargs)
+
+        combined_pts = base_mesh.copy()
+        for fp in self.fixed_points:
+            if not any(abs(fp - p) < 1e-9 for p in combined_pts):
+                combined_pts.append(fp)
+
+        combined_pts.sort()
+        self.mesh = combined_pts
+
+        is_fixed = [False] * len(combined_pts)
+        for i, p in enumerate(combined_pts):
+            if any(abs(p - fp) < 1e-9 for fp in self.fixed_points):
+                is_fixed[i] = True
+
+        # Initialize momentum trackers
+        velocities = [0.0] * len(self.mesh)
+
+        iters = 0
+        stagnation_counter = 0
+
+        while iters < max_iterations:
+            iters += 1
+
+            self.dx = self._get_cell_sizes()
+            shrink_demand = [0.0] * len(self.dx)
+
+            for j in range(len(self.dx)):
+                demand = 0.0
+                if self.dx[j] > self.max_res:
+                    demand += (self.dx[j] - self.max_res)
+                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j-1] * self.ratio)
+                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j+1] * self.ratio)
+                shrink_demand[j] = demand
+
+            max_demand = max(shrink_demand) if shrink_demand else 0.0
+
+            if max_demand <= 1e-9:
+                break
+
+            shifts = [0.0] * len(self.mesh)
+            max_shift_applied = 0.0
+
+            for i in range(1, len(self.mesh) - 1):
+                if is_fixed[i]:
+                    continue
+
+                force = shrink_demand[i] - shrink_demand[i-1]
+
+                if abs(force) > 1e-12 or abs(velocities[i]) > 1e-12:
+                    # Apply damping to existing momentum, add new acceleration
+                    velocities[i] = (velocities[i] * damping) + (force * relaxation_factor)
+
+                    max_left = -0.4 * self.dx[i-1]
+                    max_right = 0.4 * self.dx[i]
+
+                    # Restrict actual movement to avoid bounds
+                    shift = max(max_left, min(max_right, velocities[i]))
+
+                    # Anti-windup: If we hit a wall, kill the phantom velocity trying to push past it
+                    velocities[i] = shift
+                    shifts[i] = shift
+
+                    max_shift_applied = max(max_shift_applied, abs(shift))
+
+            for i in range(1, len(self.mesh) - 1):
+                self.mesh[i] += shifts[i]
+
+            # --- Topological Insertion (Stagnation Break) ---
+            if max_demand > 1e-4 and max_shift_applied < max_demand * 1e-4:
+                stagnation_counter += 1
+            else:
+                stagnation_counter = 0
+
+            if stagnation_counter > 50:
+                tied_indices = [i for i, d in enumerate(shrink_demand) if max_demand - d < 1e-9]
+
+                for idx in reversed(tied_indices):
+                    new_pt = (self.mesh[idx] + self.mesh[idx + 1]) / 2.0
+                    self.mesh.insert(idx + 1, new_pt)
+                    is_fixed.insert(idx + 1, False)
+                    velocities.insert(idx + 1, 0.0) # Synchronize the momentum array!
+                    logger.debug(f"Iterative Relaxation Momentum: Splitting cell {idx}. Inserted pt: {new_pt:.4f}")
+
+                stagnation_counter = 0
+
+        if iters >= max_iterations:
+            raise RuntimeError(f"iterative_relaxation_momentum failed to converge after {max_iterations} iterations.")
+
+        if snap_to_optional:
+            for i in range(1, len(self.mesh) - 1):
+                if is_fixed[i]:
+                    continue
+
+                pt_ll = self.mesh[i-2] if i >= 2 else None
+                pt_l = self.mesh[i-1]
+                pt_r = self.mesh[i+1]
+                pt_rr = self.mesh[i+2] if i <= len(self.mesh) - 3 else None
+
+                snapped = self._evaluate_optional_snap(
+                    candidate_pt=self.mesh[i],
+                    pt_ll=pt_ll,
+                    pt_l=pt_l,
+                    pt_r=pt_r,
+                    pt_rr=pt_rr,
+                    from_left=True,
+                    from_right=True
+                )
+                if snapped != self.mesh[i]:
+                    self.mesh[i] = snapped
+
+        return self.mesh
+
+    def _iterative_relaxation_fast_momentum(self, max_iterations: int = 20000, relaxation_factor: float = 0.3, damping: float = 0.8, snap_to_optional: bool = True, **kwargs) -> list[float]:
+        """
+        Combines the $O(1)$ shockwave propagation of Symmetric Gauss-Seidel with
+        the asymptotic acceleration of Mass-Spring-Damper momentum for ultra-fast convergence.
+        """
+        base_mesh = self._global_grid_search(**kwargs)
+
+        combined_pts = base_mesh.copy()
+        for fp in self.fixed_points:
+            if not any(abs(fp - p) < 1e-9 for p in combined_pts):
+                combined_pts.append(fp)
+
+        combined_pts.sort()
+        self.mesh = combined_pts
+
+        is_fixed = [False] * len(combined_pts)
+        for i, p in enumerate(combined_pts):
+            if any(abs(p - fp) < 1e-9 for fp in self.fixed_points):
+                is_fixed[i] = True
+
+        velocities = [0.0] * len(self.mesh)
+        iters = 0
+        stagnation_counter = 0
+
+        while iters < max_iterations:
+            iters += 1
+
+            self.dx = self._get_cell_sizes()
+            shrink_demand = [0.0] * len(self.dx)
+
+            for j in range(len(self.dx)):
+                demand = 0.0
+                if self.dx[j] > self.max_res:
+                    demand += (self.dx[j] - self.max_res)
+                if j > 0 and self.dx[j] > self.dx[j-1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j-1] * self.ratio)
+                if j < len(self.dx) - 1 and self.dx[j] > self.dx[j+1] * self.ratio:
+                    demand += (self.dx[j] - self.dx[j+1] * self.ratio)
+                shrink_demand[j] = demand
+
+            max_demand = max(shrink_demand) if shrink_demand else 0.0
+
+            if max_demand <= 1e-9:
+                break
+
+            max_shift_applied = 0.0
+
+            sweep_indices = range(1, len(self.mesh) - 1) if iters % 2 == 1 else range(len(self.mesh) - 2, 0, -1)
+
+            for i in sweep_indices:
+                if is_fixed[i]: continue
+
+                dx_l = self.mesh[i] - self.mesh[i-1]
+                dx_r = self.mesh[i+1] - self.mesh[i]
+
+                demand_l = 0.0
+                if dx_l > self.max_res:
+                    demand_l += (dx_l - self.max_res)
+                if i > 1:
+                    dx_ll = self.mesh[i-1] - self.mesh[i-2]
+                    if dx_l > dx_ll * self.ratio:
+                        demand_l += (dx_l - dx_ll * self.ratio)
+                if dx_l > dx_r * self.ratio:
+                    demand_l += (dx_l - dx_r * self.ratio)
+
+                demand_r = 0.0
+                if dx_r > self.max_res:
+                    demand_r += (dx_r - self.max_res)
+                if dx_r > dx_l * self.ratio:
+                    demand_r += (dx_r - dx_l * self.ratio)
+                if i < len(self.mesh) - 2:
+                    dx_rr = self.mesh[i+2] - self.mesh[i+1]
+                    if dx_r > dx_rr * self.ratio:
+                        demand_r += (dx_r - dx_rr * self.ratio)
+
+                force = demand_r - demand_l
+
+                if abs(force) > 1e-12 or abs(velocities[i]) > 1e-12:
+                    velocities[i] = (velocities[i] * damping) + (force * relaxation_factor)
+
+                    max_left = -0.4 * dx_l
+                    max_right = 0.4 * dx_r
+                    shift = max(max_left, min(max_right, velocities[i]))
+
+                    velocities[i] = shift
+
+                    if abs(shift) > 1e-12:
+                        self.mesh[i] += shift
+                        max_shift_applied = max(max_shift_applied, abs(shift))
+
+            if max_demand > 1e-4 and max_shift_applied < max_demand * 1e-4:
+                stagnation_counter += 1
+            else:
+                stagnation_counter = 0
+
+            if stagnation_counter > 50:
+                tied_indices = [i for i, d in enumerate(shrink_demand) if max_demand - d < 1e-9]
+
+                for idx in reversed(tied_indices):
+                    new_pt = (self.mesh[idx] + self.mesh[idx + 1]) / 2.0
+                    self.mesh.insert(idx + 1, new_pt)
+                    is_fixed.insert(idx + 1, False)
+                    velocities.insert(idx + 1, 0.0) # Sync momentum
+                    logger.debug(f"Iterative Relaxation Fast Momentum: Splitting cell {idx}. Inserted pt: {new_pt:.4f}")
+
+                stagnation_counter = 0
+
+        if iters >= max_iterations:
+            raise RuntimeError(f"iterative_relaxation_fast_momentum failed to converge after {max_iterations} iterations.")
+
         if snap_to_optional:
             for i in range(1, len(self.mesh) - 1):
                 if is_fixed[i]: continue
