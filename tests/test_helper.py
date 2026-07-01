@@ -679,7 +679,7 @@ class TestFDTDMesher1DIntegration:
         "segment_uniform",
         "segment_graded",
         "global_grid_search",
-        pytest.param("iterative_relaxation", marks=pytest.mark.skip(reason="Known to converge with additional iterations (up to 85000)")),
+        "iterative_relaxation",
     ])
     def test_symmetric_non_uniform_realistic_example_mesh(self, algorithm):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
@@ -689,8 +689,12 @@ class TestFDTDMesher1DIntegration:
 
         #raise RuntimeError(fixed)
 
+        kwargs = {}
+        if algorithm == "iterative_relaxation":
+            kwargs["max_iterations"] = 85000
+
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=1.7472369284948892, ratio=1.2)
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         # 1. Must satisfy all mathematical FDTD requirements
         check_mesh_validity(final_mesh, fixed, max_res=1.7472369284948892, ratio=1.2, algorithm=algorithm)
@@ -705,7 +709,8 @@ class TestFDTDMesher1DIntegration:
         "segment_uniform",
         "segment_graded",
         "global_grid_search",
-        pytest.param("iterative_relaxation", marks=pytest.mark.skip(reason="WIP")),
+        "iterative_relaxation",
+        #pytest.param("iterative_relaxation", marks=pytest.mark.skip(reason="WIP")),
         pytest.param("iterative_relaxation_fast", marks=pytest.mark.skip(reason="WIP")),
     ])
     @settings(max_examples=5)
@@ -739,7 +744,7 @@ class TestFDTDMesher1DIntegration:
         check_mesh_validity(mesh, fixed_points, max_res=max_res, ratio=ratio, algorithm=algorithm)
 
     @pytest.mark.parametrize("algorithm", [
-        pytest.param("iterative_relaxation", marks=pytest.mark.skip(reason="Known to converge with additional iterations (up to 30000)")),
+        "iterative_relaxation",
         "iterative_relaxation_fast"
     ])
     def test_iterative_relaxation_stagnation_injection(self, algorithm):
@@ -747,10 +752,14 @@ class TestFDTDMesher1DIntegration:
         fixed = [0.0, 10.0, 10.1]
         mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
 
+        kwargs = {}
+        if algorithm == "iterative_relaxation":
+            kwargs["max_iterations"] = 30000
+
         # Without topological injection, this setup creates an infinite spring loop.
         # It should complete successfully and the resulting mesh size should be larger
         # than what a pure uniform base grid search would generate (7 points).
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm=algorithm)
         assert len(final_mesh) > 7, "Mesh did not inject new points to break stagnation."
