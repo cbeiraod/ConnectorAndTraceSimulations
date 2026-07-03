@@ -1018,16 +1018,16 @@ class FDTDMesher1D:
                 alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if damping_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
                 betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, stiff_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
 
-                proposed_shifts = [0.0] * len(self.mesh)
+                raw_shifts = [0.0] * len(self.mesh)
 
                 for i in range(1, len(self.mesh) - 1):
                     if is_fixed[i]: continue
 
                     if update_type == "first_order":
-                        proposed_shifts[i] = omega * alphas[i] * forces[i]
+                        raw_shifts[i] = alphas[i] * forces[i]
                     elif update_type == "momentum":
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * forces[i]
-                        proposed_shifts[i] = omega * velocities[i]
+                        raw_shifts[i] = velocities[i]
                     elif update_type == "nesterov":
                         look_shift = betas[i] * velocities[i]
                         look_shift_clipped = self._clip_local_elastic_step(self.mesh, i, look_shift)
@@ -1035,18 +1035,20 @@ class FDTDMesher1D:
                         temp_mesh[i] += look_shift_clipped
                         look_forces = self._calculate_node_spring_forces(temp_mesh)
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * look_forces[i]
-                        proposed_shifts[i] = omega * velocities[i]
+                        raw_shifts[i] = velocities[i]
                     elif update_type == "leapfrog":
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * forces[i]
-                        proposed_shifts[i] = omega * velocities[i]
+                        raw_shifts[i] = velocities[i]
 
-                clipped_shifts = self._clip_elastic_steps(self.mesh, proposed_shifts, is_fixed)
-                for i in range(1, len(self.mesh) - 1):
-                    if is_fixed[i]: continue
-                    self.mesh[i] += clipped_shifts[i]
-                    if update_type != "first_order":
-                        velocities[i] = clipped_shifts[i]
-                    max_shift_applied = max(max_shift_applied, abs(clipped_shifts[i]))
+                max_shift_applied = max(max_shift_applied, self._apply_global_kinematic_step(
+                    self.mesh,
+                    velocities,
+                    raw_shifts,
+                    is_fixed,
+                    omega,
+                    list(range(1, len(self.mesh) - 1)),
+                    update_velocity=(update_type != "first_order")
+                ))
 
             # ----------------------------------------
             # Gauss-Seidel Sweep Strategy (Sequential L2R)
@@ -1058,12 +1060,12 @@ class FDTDMesher1D:
                     force = self._calculate_local_node_spring_force(self.mesh, i)
                     alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, damping_mode, stiff_gamma)
 
-                    proposed_shift = 0.0
+                    raw_shift = 0.0
                     if update_type == "first_order":
-                        proposed_shift = omega * alpha_i * force
+                        raw_shift = alpha_i * force
                     elif update_type in ("momentum", "leapfrog"):
                         velocities[i] = beta_i * velocities[i] + alpha_i * force
-                        proposed_shift = omega * velocities[i]
+                        raw_shift = velocities[i]
                     elif update_type == "nesterov":
                         look_shift = beta_i * velocities[i]
                         look_shift_clipped = self._clip_local_elastic_step(self.mesh, i, look_shift)
@@ -1071,13 +1073,17 @@ class FDTDMesher1D:
                         temp_mesh[i] += look_shift_clipped
                         look_force = self._calculate_local_node_spring_force(temp_mesh, i)
                         velocities[i] = beta_i * velocities[i] + alpha_i * look_force
-                        proposed_shift = omega * velocities[i]
+                        raw_shift = velocities[i]
 
-                    clipped_shift = self._clip_local_elastic_step(self.mesh, i, proposed_shift)
-                    self.mesh[i] += clipped_shift
-                    if update_type != "first_order":
-                        velocities[i] = clipped_shift
-                    max_shift_applied = max(max_shift_applied, abs(clipped_shift))
+                    shift_applied = self._apply_local_kinematic_step(
+                        self.mesh,
+                        velocities,
+                        i,
+                        raw_shift,
+                        omega,
+                        update_velocity=(update_type != "first_order")
+                    )
+                    max_shift_applied = max(max_shift_applied, shift_applied)
 
             # ----------------------------------------
             # Symmetric Gauss-Seidel Sweep Strategy (Bidirectional Sequential)
@@ -1090,12 +1096,12 @@ class FDTDMesher1D:
                     force = self._calculate_local_node_spring_force(self.mesh, i)
                     alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, damping_mode, stiff_gamma)
 
-                    proposed_shift = 0.0
+                    raw_shift = 0.0
                     if update_type == "first_order":
-                        proposed_shift = omega * alpha_i * force
+                        raw_shift = alpha_i * force
                     elif update_type in ("momentum", "leapfrog"):
                         velocities[i] = beta_i * velocities[i] + alpha_i * force
-                        proposed_shift = omega * velocities[i]
+                        raw_shift = velocities[i]
                     elif update_type == "nesterov":
                         look_shift = beta_i * velocities[i]
                         look_shift_clipped = self._clip_local_elastic_step(self.mesh, i, look_shift)
@@ -1103,13 +1109,17 @@ class FDTDMesher1D:
                         temp_mesh[i] += look_shift_clipped
                         look_force = self._calculate_local_node_spring_force(temp_mesh, i)
                         velocities[i] = beta_i * velocities[i] + alpha_i * look_force
-                        proposed_shift = omega * velocities[i]
+                        raw_shift = velocities[i]
 
-                    clipped_shift = self._clip_local_elastic_step(self.mesh, i, proposed_shift)
-                    self.mesh[i] += clipped_shift
-                    if update_type != "first_order":
-                        velocities[i] = clipped_shift
-                    max_shift_applied = max(max_shift_applied, abs(clipped_shift))
+                    shift_applied = self._apply_local_kinematic_step(
+                        self.mesh,
+                        velocities,
+                        i,
+                        raw_shift,
+                        omega,
+                        update_velocity=(update_type != "first_order")
+                    )
+                    max_shift_applied = max(max_shift_applied, shift_applied)
 
                 # Backward Sweep (Right-to-Left)
                 for i in range(len(self.mesh) - 2, 0, -1):
@@ -1118,12 +1128,12 @@ class FDTDMesher1D:
                     force = self._calculate_local_node_spring_force(self.mesh, i)
                     alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, damping_mode, stiff_gamma)
 
-                    proposed_shift = 0.0
+                    raw_shift = 0.0
                     if update_type == "first_order":
-                        proposed_shift = omega * alpha_i * force
+                        raw_shift = alpha_i * force
                     elif update_type in ("momentum", "leapfrog"):
                         velocities[i] = beta_i * velocities[i] + alpha_i * force
-                        proposed_shift = omega * velocities[i]
+                        raw_shift = velocities[i]
                     elif update_type == "nesterov":
                         look_shift = beta_i * velocities[i]
                         look_shift_clipped = self._clip_local_elastic_step(self.mesh, i, look_shift)
@@ -1131,13 +1141,17 @@ class FDTDMesher1D:
                         temp_mesh[i] += look_shift_clipped
                         look_force = self._calculate_local_node_spring_force(temp_mesh, i)
                         velocities[i] = beta_i * velocities[i] + alpha_i * look_force
-                        proposed_shift = omega * velocities[i]
+                        raw_shift = velocities[i]
 
-                    clipped_shift = self._clip_local_elastic_step(self.mesh, i, proposed_shift)
-                    self.mesh[i] += clipped_shift
-                    if update_type != "first_order":
-                        velocities[i] = clipped_shift
-                    max_shift_applied = max(max_shift_applied, abs(clipped_shift))
+                    shift_applied = self._apply_local_kinematic_step(
+                        self.mesh,
+                        velocities,
+                        i,
+                        raw_shift,
+                        omega,
+                        update_velocity=(update_type != "first_order")
+                    )
+                    max_shift_applied = max(max_shift_applied, shift_applied)
 
             # ----------------------------------------
             # Red-Black Checkerboard Sweep Strategy
@@ -1152,14 +1166,14 @@ class FDTDMesher1D:
                 alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if damping_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
                 betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, stiff_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
 
-                proposed_shifts = [0.0] * len(self.mesh)
+                raw_shifts = [0.0] * len(self.mesh)
                 for i in even_indices:
                     if is_fixed[i]: continue
                     if update_type == "first_order":
-                        proposed_shifts[i] = omega * alphas[i] * forces[i]
+                        raw_shifts[i] = alphas[i] * forces[i]
                     elif update_type in ("momentum", "leapfrog"):
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * forces[i]
-                        proposed_shifts[i] = omega * velocities[i]
+                        raw_shifts[i] = velocities[i]
                     elif update_type == "nesterov":
                         look_shift = betas[i] * velocities[i]
                         look_shift_clipped = self._clip_local_elastic_step(self.mesh, i, look_shift)
@@ -1167,29 +1181,31 @@ class FDTDMesher1D:
                         temp_mesh[i] += look_shift_clipped
                         look_forces = self._calculate_node_spring_forces(temp_mesh)
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * look_forces[i]
-                        proposed_shifts[i] = omega * velocities[i]
+                        raw_shifts[i] = velocities[i]
 
-                clipped_shifts = self._clip_elastic_steps(self.mesh, proposed_shifts, is_fixed)
-                for i in even_indices:
-                    if is_fixed[i]: continue
-                    self.mesh[i] += clipped_shifts[i]
-                    if update_type != "first_order":
-                        velocities[i] = clipped_shifts[i]
-                    max_shift_applied = max(max_shift_applied, abs(clipped_shifts[i]))
+                max_shift_applied = max(max_shift_applied, self._apply_global_kinematic_step(
+                    self.mesh,
+                    velocities,
+                    raw_shifts,
+                    is_fixed,
+                    omega,
+                    even_indices,
+                    update_velocity=(update_type != "first_order")
+                ))
 
                 # Step 2: Black Node Update
                 forces = self._calculate_node_spring_forces(self.mesh)
                 alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if damping_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
                 betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, stiff_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
 
-                proposed_shifts = [0.0] * len(self.mesh)
+                raw_shifts = [0.0] * len(self.mesh)
                 for i in odd_indices:
                     if is_fixed[i]: continue
                     if update_type == "first_order":
-                        proposed_shifts[i] = omega * alphas[i] * forces[i]
+                        raw_shifts[i] = alphas[i] * forces[i]
                     elif update_type in ("momentum", "leapfrog"):
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * forces[i]
-                        proposed_shifts[i] = omega * velocities[i]
+                        raw_shifts[i] = velocities[i]
                     elif update_type == "nesterov":
                         look_shift = betas[i] * velocities[i]
                         look_shift_clipped = self._clip_local_elastic_step(self.mesh, i, look_shift)
@@ -1197,15 +1213,17 @@ class FDTDMesher1D:
                         temp_mesh[i] += look_shift_clipped
                         look_forces = self._calculate_node_spring_forces(temp_mesh)
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * look_forces[i]
-                        proposed_shifts[i] = omega * velocities[i]
+                        raw_shifts[i] = velocities[i]
 
-                clipped_shifts = self._clip_elastic_steps(self.mesh, proposed_shifts, is_fixed)
-                for i in odd_indices:
-                    if is_fixed[i]: continue
-                    self.mesh[i] += clipped_shifts[i]
-                    if update_type != "first_order":
-                        velocities[i] = clipped_shifts[i]
-                    max_shift_applied = max(max_shift_applied, abs(clipped_shifts[i]))
+                max_shift_applied = max(max_shift_applied, self._apply_global_kinematic_step(
+                    self.mesh,
+                    velocities,
+                    raw_shifts,
+                    is_fixed,
+                    omega,
+                    odd_indices,
+                    update_velocity=(update_type != "first_order")
+                ))
 
             # --- Topological Insertion (Stagnation Break) ---
             if max_demand > 1e-4 and max_shift_applied < max_demand * 1e-4:
@@ -1342,6 +1360,45 @@ class FDTDMesher1D:
         max_left = -safety_factor * dx_l
         max_right = safety_factor * dx_r
         return max(max_left, min(max_right, proposed_shift))
+
+    def _apply_global_kinematic_step(self, mesh: list[float], velocities: list[float], raw_shifts: list[float], is_fixed: list[bool], omega: float, active_indices: list[int], update_velocity: bool = True, safety_factor: float = 0.4) -> float:
+        """
+        Atomically applies simultaneous coordinate shifts and synchronizes momentum.
+        Clips the raw_shifts, optionally commits them to the velocity history array,
+        and finally scales the displacement by omega for the coordinate update.
+        """
+        scaled_shifts = [shift * omega for shift in raw_shifts]
+        clipped_shifts = self._clip_elastic_steps(mesh, scaled_shifts, is_fixed, safety_factor)
+
+        max_shift = 0.0
+
+        for i in active_indices:
+            if is_fixed[i]: continue
+
+            actual_shift = clipped_shifts[i]
+
+            if update_velocity and abs(clipped_shifts[i] - scaled_shifts[i]) > 1e-12:
+                # Sync velocity: divide back by omega to store the unscaled equivalent shift
+                velocities[i] = actual_shift / omega if omega != 0 else 0.0
+
+            mesh[i] += actual_shift
+            max_shift = max(max_shift, abs(actual_shift))
+
+        return max_shift
+
+    def _apply_local_kinematic_step(self, mesh: list[float], velocities: list[float], i: int, raw_shift: float, omega: float, update_velocity: bool = True, safety_factor: float = 0.4) -> float:
+        """
+        Atomically applies a single sequential coordinate shift and synchronizes momentum.
+        """
+        scaled_shift = raw_shift * omega
+        actual_shift = self._clip_local_elastic_step(mesh, i, scaled_shift, safety_factor)
+
+        if update_velocity and abs(actual_shift - scaled_shift) > 1e-12:
+            # Sync velocity: divide back by omega to store the unscaled equivalent shift
+            velocities[i] = actual_shift / omega if omega != 0 else 0.0
+
+        mesh[i] += actual_shift
+        return abs(actual_shift)
 
     def _calculate_stiffness_adjoint_damping(self, mesh: list[float], base_damping: float, stiff_gamma: float) -> list[float]:
         """
