@@ -292,7 +292,7 @@ class TestFDTDMesher1DStateless:
 
     def test_local_node_force_equivalence_with_global(self):
         """
-        Asserts that the localized node force calculation (_calculate_local_node_force)
+        Asserts that the localized node force calculation (_calculate_local_node_spring_force)
         is mathematically equivalent to extracting the force from the global calculation
         (_calculate_node_spring_forces) for every internal node index in an asymmetric mesh.
         """
@@ -305,7 +305,7 @@ class TestFDTDMesher1DStateless:
 
         # Check every single internal node
         for i in range(1, len(mesh) - 1):
-            local_force = mesher._calculate_local_node_force(mesh, i)
+            local_force = mesher._calculate_local_node_spring_force(mesh, i)
             assert local_force == pytest.approx(global_forces[i], abs=1e-12)
 
     def test_local_node_force_boundary_guards(self):
@@ -321,11 +321,11 @@ class TestFDTDMesher1DStateless:
         global_forces = mesher._calculate_node_spring_forces(mesh)
 
         # Node i=1
-        force_i1 = mesher._calculate_local_node_force(mesh, i=1)
+        force_i1 = mesher._calculate_local_node_spring_force(mesh, i=1)
         assert force_i1 == pytest.approx(global_forces[1], abs=1e-12)
 
         # Node i=M-2 (i=4)
-        force_iM2 = mesher._calculate_local_node_force(mesh, i=4)
+        force_iM2 = mesher._calculate_local_node_spring_force(mesh, i=4)
         assert force_iM2 == pytest.approx(global_forces[4], abs=1e-12)
 
     def test_local_node_force_perfect_equilibrium(self):
@@ -335,7 +335,7 @@ class TestFDTDMesher1DStateless:
         mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
 
         # Node 3 is surrounded by perfectly uniform cells of size 1.0 (satisfies max_res 2.0 and ratio 1.5)
-        local_force = mesher._calculate_local_node_force(mesh, i=3)
+        local_force = mesher._calculate_local_node_spring_force(mesh, i=3)
         assert local_force == pytest.approx(0.0, abs=1e-12)
 
 
