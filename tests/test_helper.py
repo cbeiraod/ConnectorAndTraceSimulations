@@ -290,6 +290,54 @@ class TestFDTDMesher1DStateless:
         # (since M is 9, index 4 is the exact mirror plane center)
         assert forces[4] == pytest.approx(0.0, abs=1e-12)
 
+    def test_local_node_force_equivalence_with_global(self):
+        """
+        Asserts that the localized node force calculation (_calculate_local_node_force)
+        is mathematically equivalent to extracting the force from the global calculation
+        (_calculate_node_spring_forces) for every internal node index in an asymmetric mesh.
+        """
+        fixed = [0.0, 15.0]
+        mesh = [0.0, 0.8, 1.5, 4.0, 9.0, 11.0, 13.5, 15.0]
+        # max_res = 2.0, ratio = 1.3
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.3)
+
+        global_forces = mesher._calculate_node_spring_forces(mesh)
+
+        # Check every single internal node
+        for i in range(1, len(mesh) - 1):
+            local_force = mesher._calculate_local_node_force(mesh, i)
+            assert local_force == pytest.approx(global_forces[i], abs=1e-12)
+
+    def test_local_node_force_boundary_guards(self):
+        """
+        Specifically tests node force calculations at boundaries (i=1 and i=M-2)
+        to ensure local boundary guards safely evaluate neighboring cells without index errors.
+        """
+        fixed = [0.0, 10.0]
+        mesh = [0.0, 1.2, 2.4, 5.0, 8.8, 10.0] # M = 6 nodes.
+        # Boundaries to check: i=1 (leftmost internal node) and i=4 (rightmost internal node)
+        mesher = FDTDMesher1D(fixed, [], max_res=1.5, ratio=1.2)
+
+        global_forces = mesher._calculate_node_spring_forces(mesh)
+
+        # Node i=1
+        force_i1 = mesher._calculate_local_node_force(mesh, i=1)
+        assert force_i1 == pytest.approx(global_forces[1], abs=1e-12)
+
+        # Node i=M-2 (i=4)
+        force_iM2 = mesher._calculate_local_node_force(mesh, i=4)
+        assert force_iM2 == pytest.approx(global_forces[4], abs=1e-12)
+
+    def test_local_node_force_perfect_equilibrium(self):
+        """Ensures that a local neighborhood in perfect equilibrium returns exactly 0.0 force."""
+        fixed = [0.0, 10.0]
+        mesh = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0]
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
+
+        # Node 3 is surrounded by perfectly uniform cells of size 1.0 (satisfies max_res 2.0 and ratio 1.5)
+        local_force = mesher._calculate_local_node_force(mesh, i=3)
+        assert local_force == pytest.approx(0.0, abs=1e-12)
+
 
 class TestFDTDMesher1DSplitting:
 
