@@ -125,6 +125,172 @@ class TestFDTDMesher1DState:
         assert target is None
 
 
+class TestFDTDMesher1DStateless:
+    """
+    Tests the stateless mathematical and physical operator stencils of FDTDMesher1D.
+    Verifies that operations on arbitrary grid configurations conform to physical
+    principles such as monotonicity of cell demand and Newton's Third Law (action-reaction symmetry).
+    """
+
+    def test_demand_zero_when_valid(self):
+        """No constraints are violated; demand must be exactly 0.0."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # dx = [1.0, 1.2, 1.5], idx = 1 (size 1.2)
+        # 1.2 <= max_res (2.0) -> ok
+        # 1.2 <= left_neighbor (1.0) * ratio (1.5) = 1.5 -> ok
+        # 1.2 <= right_neighbor (1.5) * ratio (1.5) = 2.25 -> ok
+        demand = mesher._calculate_cell_demand([1.0, 1.2, 1.5], 1)
+        assert demand == pytest.approx(0.0)
+
+    def test_demand_max_res_violation_only(self):
+        """Only the maximum resolution boundary is crossed."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # dx = [2.0, 2.5, 2.0], idx = 1 (size 2.5)
+        # 2.5 > max_res (2.0) -> violation = 2.5 - 2.0 = 0.5
+        # 2.5 <= left_neighbor (2.0) * ratio (1.5) = 3.0 -> ok
+        # 2.5 <= right_neighbor (2.0) * ratio (1.5) = 3.0 -> ok
+        demand = mesher._calculate_cell_demand([2.0, 2.5, 2.0], 1)
+        assert demand == pytest.approx(0.5)
+
+    def test_demand_left_ratio_violation_only(self):
+        """Only the left neighbor ratio constraint is violated."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=3.0, ratio=1.5)
+        # dx = [1.0, 2.0, 2.0], idx = 1 (size 2.0)
+        # 2.0 <= max_res (3.0) -> ok
+        # 2.0 > left_neighbor (1.0) * ratio (1.5) = 1.5 -> violation = 2.0 - 1.5 = 0.5
+        # 2.0 <= right_neighbor (2.0) * ratio (1.5) = 3.0 -> ok
+        demand = mesher._calculate_cell_demand([1.0, 2.0, 2.0], 1)
+        assert demand == pytest.approx(0.5)
+
+    def test_demand_right_ratio_violation_only(self):
+        """Only the right neighbor ratio constraint is violated."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=3.0, ratio=1.5)
+        # dx = [2.0, 2.0, 1.0], idx = 1 (size 2.0)
+        # 2.0 <= max_res (3.0) -> ok
+        # 2.0 <= left_neighbor (2.0) * ratio (1.5) = 3.0 -> ok
+        # 2.0 > right_neighbor (1.0) * ratio (1.5) = 1.5 -> violation = 2.0 - 1.5 = 0.5
+        demand = mesher._calculate_cell_demand([2.0, 2.0, 1.0], 1)
+        assert demand == pytest.approx(0.5)
+
+    def test_demand_boundary_left_index_zero(self):
+        """Index 0 has no left neighbor; must skip left ratio checks cleanly."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # dx = [2.5, 2.0], idx = 0 (size 2.5)
+        # 2.5 > max_res (2.0) -> violation = 2.5 - 2.0 = 0.5
+        # No left neighbor -> ok
+        # 2.5 <= right_neighbor (2.0) * ratio (1.5) = 3.0 -> ok
+        demand = mesher._calculate_cell_demand([2.5, 2.0], 0)
+        assert demand == pytest.approx(0.5)
+
+    def test_demand_boundary_right_last_index(self):
+        """Last index has no right neighbor; must skip right ratio checks cleanly."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        # dx = [2.0, 2.5], idx = 1 (size 2.5)
+        # 2.5 > max_res (2.0) -> violation = 2.5 - 2.0 = 0.5
+        # 2.5 <= left_neighbor (2.0) * ratio (1.5) = 3.0 -> ok
+        # No right neighbor -> ok
+        demand = mesher._calculate_cell_demand([2.0, 2.5], 1)
+        assert demand == pytest.approx(0.5)
+
+    @given(
+        dx=st.lists(st.floats(min_value=0.01, max_value=10.0), min_size=3, max_size=10),
+        max_res=st.floats(min_value=0.1, max_value=5.0),
+        ratio=st.floats(min_value=1.1, max_value=2.0)
+    )
+    def test_demand_properties_fuzzing(self, dx, max_res, ratio):
+        """Fuzzes 'dx' arrangements to assert core physical properties of spring stress."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=max_res, ratio=ratio)
+        for idx in range(len(dx)):
+            demand = mesher._calculate_cell_demand(dx, idx)
+            # Property 1: Stress is a non-negative scalar quantity
+            assert demand >= 0.0
+
+            # Property 2: Monotonicity (Increasing cell size must monotonically increase or maintain stress)
+            increased_dx = dx.copy()
+            increased_dx[idx] += 1.0
+            increased_demand = mesher._calculate_cell_demand(increased_dx, idx)
+            assert increased_demand >= demand
+
+    def test_node_spring_forces_boundary_zero(self):
+        """Ensures that the boundary/anchor nodes (0 and M-1) are always subjected to exactly 0.0 force."""
+        fixed = [0.0, 10.0]
+        # Let's create an asymmetric mesh with an extreme ratio shock
+        mesh = [0.0, 1.0, 9.0, 10.0]
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
+
+        forces = mesher._calculate_node_spring_forces(mesh)
+
+        # Absolute boundaries must feel zero force as they are locked
+        assert forces[0] == pytest.approx(0.0)
+        assert forces[-1] == pytest.approx(0.0)
+
+    def test_node_spring_forces_no_violation(self):
+        """Ensures that a perfectly uniform mesh satisfying all limits yields exactly 0.0 force everywhere."""
+        fixed = [0.0, 4.0]
+        mesh = [0.0, 1.0, 2.0, 3.0, 4.0] # Cells of size 1.0
+        # max_res = 1.5, ratio = 1.2 -> no violations anywhere
+        mesher = FDTDMesher1D(fixed, [], max_res=1.5, ratio=1.2)
+
+        forces = mesher._calculate_node_spring_forces(mesh)
+        assert forces == pytest.approx([0.0, 0.0, 0.0, 0.0, 0.0])
+
+    def test_node_spring_forces_restorative_oversized_cell(self):
+        """
+        Ensures that an oversized cell in the middle of a mesh generates correct inward restorative forces.
+        Specifically, the left boundary node must experience positive force (pushing it right, shrinking the cell),
+        and the right boundary node must experience negative force (pushing it left, shrinking the cell).
+        """
+        fixed = [0.0, 5.0]
+        mesh = [0.0, 1.0, 4.0, 5.0] # Cell widths: 1.0, 3.0 (oversized), 1.0
+        # max_res = 2.0 (so cell 1 is violating max_res), ratio = 1.5
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
+
+        forces = mesher._calculate_node_spring_forces(mesh)
+
+        # force[1] acts on node at 1.0. It should be positive to push right.
+        assert forces[1] > 0.0
+        # force[2] acts on node at 4.0. It should be negative to push left.
+        assert forces[2] < 0.0
+        # Check physical action-reaction symmetry (equal magnitudes in symmetric bounds)
+        assert forces[1] == pytest.approx(-forces[2])
+
+    def test_node_spring_forces_symmetry_and_scale_deterministic(self):
+        """
+        Highly-stressed deterministic test checking both physical symmetry and multi-scale
+        floating-point robustness. It constructs a symmetric mesh featuring high-contrast
+        dimensional spans (micro-gaps adjacent to massive spaces, 500x difference) to
+        challenge float loss of significance under Newton's Third Law.
+        """
+        # Symmetric cell sizes spanning three orders of magnitude (0.01 mm to 5.0 mm)
+        half_widths = [0.01, 0.1, 5.0, 0.05]
+        widths = half_widths + list(reversed(half_widths))
+
+        # Construct a perfectly symmetric mesh coordinates list starting from 0.0
+        mesh = [0.0]
+        for w in widths:
+            mesh.append(mesh[-1] + w)
+
+        fixed = [mesh[0], mesh[-1]]
+        # Highly constraint-stressed parameters
+        mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.2)
+
+        forces = mesher._calculate_node_spring_forces(mesh)
+        M = len(mesh)
+
+        # 1. Assert perfect physical anti-symmetry: forces[i] == -forces[M - 1 - i]
+        # to high floating-point precision (1e-12)
+        for i in range(M):
+            mirror_idx = M - 1 - i
+            assert forces[i] == pytest.approx(-forces[mirror_idx], abs=1e-12)
+
+        # 2. Check that the forces are non-trivial (not all zero) to ensure the test is active
+        assert any(abs(f) > 1e-5 for f in forces)
+
+        # 3. Assert absolute center node feels exactly zero net force due to perfect spatial balance
+        # (since M is 9, index 4 is the exact mirror plane center)
+        assert forces[4] == pytest.approx(0.0, abs=1e-12)
+
+
 class TestFDTDMesher1DSplitting:
 
     def test_is_point_compatible_fully_defined_valid(self):
