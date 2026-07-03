@@ -65,8 +65,8 @@ class TestFDTDMesher1DState:
         mesher = FDTDMesher1D([0.0, 1.5, 4.0], [], max_res=2.0, ratio=2.0)
         # dx = [1.5, 2.5] -> 1.5 is < max_res, but 2.5 < 1.5 * ratio (3.0), so no force
 
-        assert mesher._force_left == [0.0, 0.0]
-        assert mesher._force_right == [0.0, 0.0]
+        assert mesher._pressure_left == [0.0, 0.0]
+        assert mesher._pressure_right == [0.0, 0.0]
 
     def test_calculate_forces_with_violations(self):
         """Test force calculations when ratio is violated."""
@@ -78,22 +78,22 @@ class TestFDTDMesher1DState:
         # Cell 2: 1.2 (< max_res)
 
         # Cell 1 feels force from Cell 0 on the left: 1.0 / 1.0 = 1.0
-        assert mesher._force_left[1] == pytest.approx(1.0 / 1.0)
-        assert mesher._force_left[0] == 0.0
-        assert mesher._force_left[2] == 0.0
+        assert mesher._pressure_left[1] == pytest.approx(1.0 / 1.0)
+        assert mesher._pressure_left[0] == 0.0
+        assert mesher._pressure_left[2] == 0.0
 
         # Cell 1 feels force from Cell 2 on the right: 1.0 / 1.2
-        assert mesher._force_right[1] == pytest.approx(1.0 / 1.2)
-        assert mesher._force_right[0] == 0.0
-        assert mesher._force_right[2] == 0.0
+        assert mesher._pressure_right[1] == pytest.approx(1.0 / 1.2)
+        assert mesher._pressure_right[0] == 0.0
+        assert mesher._pressure_right[2] == 0.0
 
     def test_find_target_cell_by_force(self, monkeypatch):
         """Test target selection when forces are active."""
         mesher = FDTDMesher1D([0.0, 1.0, 3.0, 8.0], [], 2.1, 2.0)
 
         # Simulate an environment where Cell 2 has the highest force
-        mesher._force_left = [0.0, 0.5, 1.0] # Max force is 1.0 at index 2
-        mesher._force_right = [0.0, 0.0, 0.8]
+        mesher._pressure_left = [0.0, 0.5, 1.0] # Max force is 1.0 at index 2
+        mesher._pressure_right = [0.0, 0.0, 0.8]
 
         # Setup mock to just return the first tied index using pytest's monkeypatch
         monkeypatch.setattr('random.choice', lambda seq: seq[0])
@@ -107,8 +107,8 @@ class TestFDTDMesher1DState:
 
         # No forces, but Cell 0 (3.0) and Cell 2 (4.0) are > max_res
         # Cell 0 is the smallest oversized cell
-        self._force_left = [0.0, 0.0, 0.0]
-        self._force_right = [0.0, 0.0, 0.0]
+        self._pressure_left = [0.0, 0.0, 0.0]
+        self._pressure_right = [0.0, 0.0, 0.0]
 
         monkeypatch.setattr('random.choice', lambda seq: seq[0])
 
@@ -504,9 +504,9 @@ class TestFDTDMesher1DIntegration:
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=max_res, ratio=ratio)
 
-        for val in mesher._force_left:
+        for val in mesher._pressure_left:
             assert val == pytest.approx(0.0)
-        for val in mesher._force_right:
+        for val in mesher._pressure_right:
             assert val == pytest.approx(0.0)
 
         final_mesh = mesher.generate(algorithm)

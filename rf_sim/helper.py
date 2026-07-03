@@ -31,7 +31,7 @@ class FDTDMesher1D:
     @max_res.setter
     def max_res(self, value: float):
         self._max_res = value
-        self._force_left, self._force_right = self._calculate_forces()
+        self._pressure_left, self._pressure_right = self._calculate_cell_ratio_pressures()
 
     @property
     def ratio(self):
@@ -39,7 +39,7 @@ class FDTDMesher1D:
     @ratio.setter
     def ratio(self, value: float):
         self._ratio = value
-        self._force_left, self._force_right = self._calculate_forces()
+        self._pressure_left, self._pressure_right = self._calculate_cell_ratio_pressures()
 
     @property
     def optional_points(self):
@@ -72,7 +72,7 @@ class FDTDMesher1D:
         self._mesh = value
 
         self.dx = self._get_cell_sizes()
-        self._force_left, self._force_right = self._calculate_forces()
+        self._pressure_left, self._pressure_right = self._calculate_cell_ratio_pressures()
 
     def generate(self, algorithm: str = "advancing_front", **kwargs) -> list[float]:
         """
@@ -881,8 +881,8 @@ class FDTDMesher1D:
                 break
 
             # A cell is forced if there is any force applied from either side.
-            f_l = self._force_left[target_idx]
-            f_r = self._force_right[target_idx]
+            f_l = self._pressure_left[target_idx]
+            f_r = self._pressure_right[target_idx]
 
             if f_l == 0.0 and f_r == 0.0:
                 new_points = self._split_unforced_cell(target_idx)
@@ -911,7 +911,7 @@ class FDTDMesher1D:
         """Returns the sizes of all current cells in the mesh."""
         return [self.mesh[i+1] - self.mesh[i] for i in range(len(self.mesh)-1)]
 
-    def _calculate_forces(self) -> tuple[list[float], list[float]]:
+    def _calculate_cell_ratio_pressures(self) -> tuple[list[float], list[float]]:
         """
         Evaluates the mesh and returns two lists (force_left, force_right).
         A force is > 0 if a cell is violating the ratio constraint from its neighbor.
@@ -941,8 +941,8 @@ class FDTDMesher1D:
         Determines which cell needs to be split next based on maximum force,
         or smallest over-sized cell. Returns None if the mesh is fully valid.
         """
-        max_f_l = max(self._force_left) if self._force_left else 0.0
-        max_f_r = max(self._force_right) if self._force_right else 0.0
+        max_f_l = max(self._pressure_left) if self._pressure_left else 0.0
+        max_f_r = max(self._pressure_right) if self._pressure_right else 0.0
         max_f = max(max_f_l, max_f_r)
 
         target_idx = -1
@@ -951,7 +951,7 @@ class FDTDMesher1D:
             # Find all cells tied for the maximum force
             tied_indices = []
             for i in range(len(self.dx)):
-                if abs(self._force_left[i] - max_f) < 1e-9 or abs(self._force_right[i] - max_f) < 1e-9:
+                if abs(self._pressure_left[i] - max_f) < 1e-9 or abs(self._pressure_right[i] - max_f) < 1e-9:
                     tied_indices.append(i)
             # Choose randomly among ties
             target_idx = random.choice(tied_indices)
