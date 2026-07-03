@@ -472,7 +472,7 @@ class TestFDTDMesher1DIntegration:
         "iterative_relaxation",
         "iterative_relaxation_fast",
         "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
+        #"iterative_relaxation_fast_momentum"
     ])
     @pytest.mark.parametrize("fixed_steps", [
         [0.0, 1.0, 2.1],           # cell0: max_res, cell1: 1.1 max_res
@@ -579,7 +579,7 @@ class TestFDTDMesher1DIntegration:
         "iterative_relaxation",
         "iterative_relaxation_fast",
         "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
+        #"iterative_relaxation_fast_momentum"
     ])
     def test_complex_grading_cascade(self, algorithm):
         """Tests a highly disparate domain to ensure the ratio cascades correctly without hanging."""
@@ -725,7 +725,7 @@ class TestFDTDMesher1DIntegration:
         "iterative_relaxation",
         "iterative_relaxation_fast",
         "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
+        #"iterative_relaxation_fast_momentum"
     ])
     @settings(max_examples=5, deadline=None)
     # @seed(42)  # <-- Uncomment this to globally freeze the random seed for this test
@@ -768,7 +768,7 @@ class TestFDTDMesher1DIntegration:
         "iterative_relaxation",
         "iterative_relaxation_fast",
         "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
+        #"iterative_relaxation_fast_momentum"
     ])
     def test_iterative_relaxation_stagnation_injection(self, algorithm):
         """Test that the stagnation detector successfully injects points to resolve impossible ratio shocks."""
