@@ -1513,8 +1513,8 @@ class TestFDTDMesher1DEquivalence:
         mesher_old = FDTDMesher1D(fixed, [], max_res=max_res, ratio=ratio)
         mesh_old = mesher_old._iterative_relaxation_momentum(
             max_iterations=50000,
-            relaxation_factor=0.2,
-            damping=0.8
+            relaxation_factor=0.1,
+            damping=0.4
         )
 
         mesher_new = FDTDMesher1D(fixed, [], max_res=max_res, ratio=ratio)
@@ -1523,8 +1523,8 @@ class TestFDTDMesher1DEquivalence:
             lr_mode="uniform",
             damping_mode="uniform",
             max_iterations=50000,
-            relaxation_factor=0.2,
-            damping=0.8,
+            relaxation_factor=0.1,
+            damping=0.4,
             omega=1.0
         )
 
@@ -1545,8 +1545,8 @@ class TestFDTDMesher1DEquivalence:
         mesher_old = FDTDMesher1D(fixed, [], max_res=max_res, ratio=ratio)
         mesh_old = mesher_old._iterative_relaxation_fast_momentum(
             max_iterations=100000,
-            relaxation_factor=0.3,
-            damping=0.8
+            relaxation_factor=0.1,
+            damping=0.4
         )
 
         mesher_new = FDTDMesher1D(fixed, [], max_res=max_res, ratio=ratio)
@@ -1555,8 +1555,8 @@ class TestFDTDMesher1DEquivalence:
             lr_mode="uniform",
             damping_mode="uniform",
             max_iterations=100000,
-            relaxation_factor=0.3,
-            damping=0.8,
+            relaxation_factor=0.1,
+            damping=0.4,
             omega=1.0
         )
 
