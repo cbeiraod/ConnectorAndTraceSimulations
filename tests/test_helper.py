@@ -1,5 +1,6 @@
 import pytest
 import random
+import math
 import sys
 from hypothesis import given, assume, settings, seed, example, strategies as st
 from rf_sim.helper import FDTDMesher1D
@@ -521,6 +522,80 @@ class TestFDTDMesher1DStateless:
         assert applied_shift == pytest.approx(2.0)
         assert mesh == pytest.approx([0.0, 7.0, 10.0])
         assert velocities[1] == pytest.approx(4.0) # Preserved perfectly!
+
+    def test_calculate_stiffness_adjoint_damping_uniform(self):
+        """Tests that a uniform mesh receives the unscaled base_damping everywhere."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 1.0, 2.0, 3.0] # dx = [1.0, 1.0, 1.0]
+
+        # kappa = 0 -> exp(0) = 1.0
+        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=0.8, stiff_gamma=5.0)
+        assert betas == pytest.approx([0.8, 0.8, 0.8, 0.8])
+
+    def test_calculate_stiffness_adjoint_damping_non_uniform(self):
+        """Tests the exponential decay of damping across a structural ratio shock."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 1.0, 3.0, 4.0] # dx = [1.0, 2.0, 1.0]
+
+        # Node 1 (pos 1.0): dx_l=1.0, dx_r=2.0 -> kappa = |2.0/1.0 - 1.0| = 1.0
+        # Node 2 (pos 3.0): dx_l=2.0, dx_r=1.0 -> kappa = |1.0/2.0 - 1.0| = 0.5
+        base = 0.8
+        gamma = 2.0
+
+        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=base, stiff_gamma=gamma)
+
+        assert betas[0] == base # Fixed anchor fallback
+        assert betas[1] == pytest.approx(base * math.exp(-gamma * (1.0 ** 2)))
+        assert betas[2] == pytest.approx(base * math.exp(-gamma * (0.5 ** 2)))
+        assert betas[3] == base # Fixed anchor fallback
+
+    def test_calculate_stiffness_adjoint_damping_microscopic_protection(self):
+        """Tests that a microscopic left cell safely bypasses division by zero."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 1e-13, 2.0] # dx_l = 1e-13
+
+        # Node 1 (pos 1e-13) has dx_l below the 1e-12 threshold.
+        # kappa should default to 0.0, returning base_damping.
+        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=0.8, stiff_gamma=5.0)
+
+        assert betas[1] == pytest.approx(0.8)
+
+    def test_calculate_stiffness_adjoint_learning_rate_uniform(self):
+        """Tests that a uniform mesh receives the unscaled base_lr everywhere."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 1.0, 2.0, 3.0] # dx = [1.0, 1.0, 1.0]
+
+        # kappa = 0 -> exp(0) = 1.0
+        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=0.2, stiff_gamma=5.0)
+        assert alphas == pytest.approx([0.2, 0.2, 0.2, 0.2])
+
+    def test_calculate_stiffness_adjoint_learning_rate_non_uniform(self):
+        """Tests the exponential decay of learning rate across a structural ratio shock."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 1.0, 3.0, 4.0] # dx = [1.0, 2.0, 1.0]
+
+        # Node 1 (pos 1.0): dx_l=1.0, dx_r=2.0 -> kappa = |2.0/1.0 - 1.0| = 1.0
+        # Node 2 (pos 3.0): dx_l=2.0, dx_r=1.0 -> kappa = |1.0/2.0 - 1.0| = 0.5
+        base = 0.2
+        gamma = 2.0
+
+        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=base, stiff_gamma=gamma)
+
+        assert alphas[0] == base # Fixed anchor fallback
+        assert alphas[1] == pytest.approx(base * math.exp(-gamma * (1.0 ** 2)))
+        assert alphas[2] == pytest.approx(base * math.exp(-gamma * (0.5 ** 2)))
+        assert alphas[3] == base # Fixed anchor fallback
+
+    def test_calculate_stiffness_adjoint_learning_rate_microscopic_protection(self):
+        """Tests that a microscopic left cell safely bypasses division by zero for alphas."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 1e-13, 2.0] # dx_l = 1e-13
+
+        # Node 1 (pos 1e-13) has dx_l below the 1e-12 threshold.
+        # kappa should default to 0.0, returning base_lr.
+        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=0.2, stiff_gamma=5.0)
+
+        assert alphas[1] == pytest.approx(0.2)
 
 
 class TestFDTDMesher1DSplitting:
