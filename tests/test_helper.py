@@ -404,6 +404,75 @@ class TestFDTDMesher1DStateless:
         # Custom safety factor
         assert mesher._clip_local_elastic_step(mesh, 1, 3.0, safety_factor=0.5) == pytest.approx(3.0)
 
+    def test_apply_global_kinematic_step_standard(self):
+        """Tests standard step application: omega scaling works, velocities untouched if no clip."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        velocities = [0.0, 0.5, 0.0]
+        raw_shifts = [0.0, 0.5, 0.0]
+        is_fixed = [True, False, True]
+
+        # omega = 1.2 -> scaled shift = 0.6. Allowed clip bounds = [-2.0, 2.0].
+        # 0.6 fits perfectly. Velocity should NOT be updated.
+        max_shift = mesher._apply_global_kinematic_step(
+            mesh, velocities, raw_shifts, is_fixed, omega=1.2, active_indices=[1], update_velocity=True
+        )
+
+        assert max_shift == pytest.approx(0.6)
+        assert mesh == pytest.approx([0.0, 5.6, 10.0])
+        assert velocities[1] == pytest.approx(0.5)  # Unmodified!
+
+    def test_apply_global_kinematic_step_inelastic_velocity_sync(self):
+        """Tests that a clipped shift correctly truncates the velocity vector to match reality."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        velocities = [0.0, 5.0, 0.0]
+        raw_shifts = [0.0, 5.0, 0.0]
+        is_fixed = [True, False, True]
+
+        # omega = 1.0. Shift = 5.0. Allowed bounds = [-2.0, 2.0].
+        # Actual shift is clipped to 2.0.
+        max_shift = mesher._apply_global_kinematic_step(
+            mesh, velocities, raw_shifts, is_fixed, omega=1.0, active_indices=[1], update_velocity=True
+        )
+
+        assert max_shift == pytest.approx(2.0)
+        assert mesh == pytest.approx([0.0, 7.0, 10.0])
+        assert velocities[1] == pytest.approx(2.0)  # Momentum truncated to match the wall!
+
+    def test_apply_global_kinematic_step_elastic_leapfrog(self):
+        """Tests that Leapfrog (update_velocity=False) hits the wall but preserves momentum."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        velocities = [0.0, 5.0, 0.0]
+        raw_shifts = [0.0, 5.0, 0.0]
+        is_fixed = [True, False, True]
+
+        # Same massive shift, but update_velocity = False
+        max_shift = mesher._apply_global_kinematic_step(
+            mesh, velocities, raw_shifts, is_fixed, omega=1.0, active_indices=[1], update_velocity=False
+        )
+
+        assert max_shift == pytest.approx(2.0)
+        assert mesh == pytest.approx([0.0, 7.0, 10.0])
+        assert velocities[1] == pytest.approx(5.0)  # Momentum preserved perfectly!
+
+    def test_apply_global_kinematic_step_active_indices_filter(self):
+        """Tests that only nodes specified in active_indices are updated (used for Red-Black)."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 2.5, 5.0, 7.5, 10.0]
+        velocities = [0.0, 1.0, 1.0, 1.0, 0.0]
+        raw_shifts = [0.0, 1.0, 1.0, 1.0, 0.0]
+        is_fixed = [True, False, False, False, True]
+
+        # We only pass [1, 3] as active indices (simulating the 'odd' Red/Black pass)
+        mesher._apply_global_kinematic_step(
+            mesh, velocities, raw_shifts, is_fixed, omega=1.0, active_indices=[1, 3], update_velocity=True
+        )
+
+        # Node 1 and 3 moved. Node 2 (index 2, position 5.0) stayed completely still.
+        assert mesh == pytest.approx([0.0, 3.5, 5.0, 8.5, 10.0])
+
 
 class TestFDTDMesher1DSplitting:
 
