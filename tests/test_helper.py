@@ -125,6 +125,13 @@ class TestFDTDMesher1DState:
         target = mesher._find_target_cell()
         assert target is None
 
+    def test_generate_unknown_algorithm(self):
+        """Test that passing an unsupported algorithm string safely raises a RuntimeError."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+
+        with pytest.raises(RuntimeError, match="Unknown algorithm: magic_mesher"):
+            mesher.generate(algorithm="magic_mesher")
+
 
 class TestFDTDMesher1DStateless:
     """
@@ -1172,6 +1179,27 @@ class TestFDTDMesher1DIntegration:
 
         # If successfully rejected, the point stays exactly at the ideal candidate 1.5
         assert final_mesh == pytest.approx([0.0, 1.5, 3.0])
+
+    def test_global_grid_search_tie_breaker_optional_points(self):
+        """
+        Tests the tie-breaking heuristic in global_grid_search.
+        N=2 gives [0.0, 2.0, 4.0], catching 1 fixed point.
+        N=4 gives [0.0, 1.0, 2.0, 3.0, 4.0], catching 1 fixed point AND 1 optional point (1.0).
+        The algorithm should select N=4 because of the higher optional point score.
+        """
+        fixed = [0.0, 2.0, 4.0]
+        optional = [1.0]
+
+        # max_res = 2.0 -> min_cells = ceil(4.0 / 2.0) = 2.
+        # max_cells = ceil(4.0 / (2.0 * 0.6)) = ceil(3.33) = 4.
+        # Grid search tests N=2, N=3, and N=4.
+        mesher = FDTDMesher1D(fixed, optional, max_res=2.0, ratio=1.5)
+
+        final_mesh = mesher.generate(algorithm="global_grid_search")
+
+        # We expect N=4 to win due to the optional point at 1.0.
+        assert final_mesh == pytest.approx([0.0, 1.0, 2.0, 3.0, 4.0])
+        check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm="global_grid_search")
 
     @pytest.mark.parametrize("algorithm", [
         pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
