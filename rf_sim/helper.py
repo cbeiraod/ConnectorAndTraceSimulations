@@ -11,6 +11,7 @@ class FDTDMesher1D:
         "iterative_relaxation", "iterative_relaxation_fast",
         "iterative_relaxation_momentum", "iterative_relaxation_fast_momentum",
         "iterative_relaxation_jacobi", "iterative_relaxation_gaussseidel",
+        "iterative_relaxation_alternatinggaussseidel",
         "iterative_relaxation_symmetricgaussseidel", "iterative_relaxation_redblack"
     ]
 
