@@ -1004,6 +1004,14 @@ class FDTDMesher1D:
         # Initialize velocity buffers for second-order methods
         velocities = [0.0] * len(self.mesh)
 
+        # Leapfrog Kickoff Step (Explicitly half-step the velocities before the loop)
+        if update_type == "leapfrog":
+            initial_forces = self._calculate_node_spring_forces(self.mesh)
+            lf_alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if damping_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
+            for i in range(1, len(self.mesh) - 1):
+                if not is_fixed[i]:
+                    velocities[i] = 0.5 * lf_alphas[i] * initial_forces[i]
+
         iters = 0
         stagnation_counter = 0
 
@@ -1076,14 +1084,17 @@ class FDTDMesher1D:
                     is_fixed,
                     omega,
                     list(range(1, len(self.mesh) - 1)),
-                    update_velocity=(update_type != "first_order")
+                    update_velocity=(update_type not in ("first_order", "leapfrog"))
                 ))
 
             # ----------------------------------------
-            # Gauss-Seidel Sweep Strategy (Sequential L2R)
+            # Gauss-Seidel Sweep Strategy (Sequential L2R or Alternating)
             # ----------------------------------------
             elif sweep_strategy == "gaussseidel":
-                for i in range(1, len(self.mesh) - 1):
+                is_alternating = kwargs.get("alternating_gs", False)
+                sweep_indices = range(len(self.mesh) - 2, 0, -1) if (is_alternating and iters % 2 == 0) else range(1, len(self.mesh) - 1)
+
+                for i in sweep_indices:
                     if is_fixed[i]: continue
 
                     force = self._calculate_local_node_spring_force(self.mesh, i)
