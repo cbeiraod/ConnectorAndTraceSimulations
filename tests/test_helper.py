@@ -529,7 +529,7 @@ class TestFDTDMesher1DStateless:
         mesh = [0.0, 1.0, 2.0, 3.0] # dx = [1.0, 1.0, 1.0]
 
         # kappa = 0 -> exp(0) = 1.0
-        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=0.8, stiff_gamma=5.0)
+        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=0.8, damping_gamma=5.0)
         assert betas == pytest.approx([0.8, 0.8, 0.8, 0.8])
 
     def test_calculate_stiffness_adjoint_damping_non_uniform(self):
@@ -542,7 +542,7 @@ class TestFDTDMesher1DStateless:
         base = 0.8
         gamma = 2.0
 
-        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=base, stiff_gamma=gamma)
+        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=base, damping_gamma=gamma)
 
         assert betas[0] == base # Fixed anchor fallback
         assert betas[1] == pytest.approx(base * math.exp(-gamma * (1.0 ** 2)))
@@ -556,7 +556,7 @@ class TestFDTDMesher1DStateless:
 
         # Node 1 (pos 1e-13) has dx_l below the 1e-12 threshold.
         # kappa should default to 0.0, returning base_damping.
-        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=0.8, stiff_gamma=5.0)
+        betas = mesher._calculate_stiffness_adjoint_damping(mesh, base_damping=0.8, damping_gamma=5.0)
 
         assert betas[1] == pytest.approx(0.8)
 
@@ -566,7 +566,7 @@ class TestFDTDMesher1DStateless:
         mesh = [0.0, 1.0, 2.0, 3.0] # dx = [1.0, 1.0, 1.0]
 
         # kappa = 0 -> exp(0) = 1.0
-        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=0.2, stiff_gamma=5.0)
+        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=0.2, lr_gamma=5.0)
         assert alphas == pytest.approx([0.2, 0.2, 0.2, 0.2])
 
     def test_calculate_stiffness_adjoint_learning_rate_non_uniform(self):
@@ -579,7 +579,7 @@ class TestFDTDMesher1DStateless:
         base = 0.2
         gamma = 2.0
 
-        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=base, stiff_gamma=gamma)
+        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=base, lr_gamma=gamma)
 
         assert alphas[0] == base # Fixed anchor fallback
         assert alphas[1] == pytest.approx(base * math.exp(-gamma * (1.0 ** 2)))
@@ -593,7 +593,7 @@ class TestFDTDMesher1DStateless:
 
         # Node 1 (pos 1e-13) has dx_l below the 1e-12 threshold.
         # kappa should default to 0.0, returning base_lr.
-        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=0.2, stiff_gamma=5.0)
+        alphas = mesher._calculate_stiffness_adjoint_learning_rate(mesh, base_lr=0.2, lr_gamma=5.0)
 
         assert alphas[1] == pytest.approx(0.2)
 
@@ -604,7 +604,7 @@ class TestFDTDMesher1DStateless:
 
         # Because damping_mode="uniform", it should ignore the mesh geometry.
         alpha, beta = mesher._get_local_coefficients(
-            i=1, base_lr=0.2, base_damping=0.8, lr_mode="uniform", damping_mode="uniform", stiff_gamma=5.0
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="uniform", damping_mode="uniform", lr_gamma=5.0, damping_gamma=5.0
         )
 
         assert alpha == 0.2
@@ -620,7 +620,7 @@ class TestFDTDMesher1DStateless:
         gamma = 2.0
 
         alpha, beta = mesher._get_local_coefficients(
-            i=1, base_lr=base_lr, base_damping=base_damping, lr_mode="adjoint", damping_mode="adjoint", stiff_gamma=gamma
+            i=1, base_lr=base_lr, base_damping=base_damping, lr_mode="adjoint", damping_mode="adjoint", lr_gamma=gamma, damping_gamma=gamma
         )
 
         expected_scale = math.exp(-gamma * (1.0 ** 2))
@@ -634,7 +634,7 @@ class TestFDTDMesher1DStateless:
 
         # Below 1e-12 threshold, kappa = 0.0, returning base scale (1.0)
         alpha, beta = mesher._get_local_coefficients(
-            i=1, base_lr=0.2, base_damping=0.8, lr_mode="adjoint", damping_mode="adjoint", stiff_gamma=5.0
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="adjoint", damping_mode="adjoint", lr_gamma=5.0, damping_gamma=5.0
         )
 
         assert alpha == pytest.approx(0.2)
@@ -647,14 +647,14 @@ class TestFDTDMesher1DStateless:
 
         # Test 1: Only LR is adjoint
         alpha1, beta1 = mesher._get_local_coefficients(
-            i=1, base_lr=0.2, base_damping=0.8, lr_mode="adjoint", damping_mode="uniform", stiff_gamma=2.0
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="adjoint", damping_mode="uniform", lr_gamma=2.0, damping_gamma=2.0
         )
         assert alpha1 < 0.2
         assert beta1 == 0.8 # Unmodified
 
         # Test 2: Only Damping is adjoint
         alpha2, beta2 = mesher._get_local_coefficients(
-            i=1, base_lr=0.2, base_damping=0.8, lr_mode="uniform", damping_mode="adjoint", stiff_gamma=2.0
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="uniform", damping_mode="adjoint", lr_gamma=2.0, damping_gamma=2.0
         )
         assert alpha2 == 0.2 # Unmodified
         assert beta2 < 0.8

@@ -963,7 +963,8 @@ class FDTDMesher1D:
         relaxation_factor: float = 0.2,
         omega: float = 1.0,
         damping: float = 0.8,
-        stiff_gamma: float = 5.0,
+        lr_gamma: float = 5.0,
+        damping_gamma: float = 5.0,
         snap_to_optional: bool = True,
         **kwargs
     ) -> list[float]:
@@ -1017,7 +1018,7 @@ class FDTDMesher1D:
         # Leapfrog Kickoff Step (Explicitly half-step the velocities before the loop)
         if update_type == "leapfrog":
             initial_forces = self._calculate_node_spring_forces(self.mesh)
-            lf_alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
+            lf_alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, lr_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
             for i in range(1, len(self.mesh) - 1):
                 if not is_fixed[i]:
                     velocities[i] = 0.5 * lf_alphas[i] * initial_forces[i]
@@ -1042,8 +1043,8 @@ class FDTDMesher1D:
             # Jacobi Sweep Strategy (Simultaneous)
             # ----------------------------------------
             if sweep_strategy == "jacobi":
-                alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
-                betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, stiff_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
+                alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, lr_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
+                betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, damping_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
 
                 raw_shifts = [0.0] * len(self.mesh)
 
@@ -1108,7 +1109,7 @@ class FDTDMesher1D:
                     if is_fixed[i]: continue
 
                     force = self._calculate_local_node_spring_force(self.mesh, i)
-                    alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, lr_mode, damping_mode, stiff_gamma)
+                    alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, lr_mode, damping_mode, lr_gamma, damping_gamma)
 
                     raw_shift = 0.0
                     if update_type == "first_order":
@@ -1144,7 +1145,7 @@ class FDTDMesher1D:
                     if is_fixed[i]: continue
 
                     force = self._calculate_local_node_spring_force(self.mesh, i)
-                    alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, lr_mode, damping_mode, stiff_gamma)
+                    alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, lr_mode, damping_mode, lr_gamma, damping_gamma)
 
                     raw_shift = 0.0
                     if update_type == "first_order":
@@ -1176,7 +1177,7 @@ class FDTDMesher1D:
                     if is_fixed[i]: continue
 
                     force = self._calculate_local_node_spring_force(self.mesh, i)
-                    alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, lr_mode, damping_mode, stiff_gamma)
+                    alpha_i, beta_i = self._get_local_coefficients(i, relaxation_factor, damping, lr_mode, damping_mode, lr_gamma, damping_gamma)
 
                     raw_shift = 0.0
                     if update_type == "first_order":
@@ -1211,8 +1212,8 @@ class FDTDMesher1D:
                 even_indices = list(range(2, len(self.mesh) - 1, 2))
                 odd_indices = list(range(1, len(self.mesh) - 1, 2))
 
-                alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
-                betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, stiff_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
+                alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, lr_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
+                betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, damping_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
 
                 # Step 1: Red Node Update
                 raw_shifts = [0.0] * len(self.mesh)
@@ -1247,8 +1248,8 @@ class FDTDMesher1D:
 
                 # Step 2: Black Node Update
                 # Recalculate stiffness/damping coefficients to reflect the updated Red nodes!
-                alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, stiff_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
-                betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, stiff_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
+                alphas = self._calculate_stiffness_adjoint_learning_rate(self.mesh, relaxation_factor, lr_gamma) if lr_mode == "adjoint" else [relaxation_factor] * len(self.mesh)
+                betas = self._calculate_stiffness_adjoint_damping(self.mesh, damping, damping_gamma) if damping_mode == "adjoint" else [damping] * len(self.mesh)
 
                 raw_shifts = [0.0] * len(self.mesh)
                 for i in odd_indices:
@@ -1458,10 +1459,10 @@ class FDTDMesher1D:
         mesh[i] += actual_shift
         return abs(actual_shift)
 
-    def _calculate_stiffness_adjoint_damping(self, mesh: list[float], base_damping: float, stiff_gamma: float) -> list[float]:
+    def _calculate_stiffness_adjoint_damping(self, mesh: list[float], base_damping: float, damping_gamma: float) -> list[float]:
         """
         Computes localized Stiffness-Adjoint damping coefficients vector ($\beta_i$) for all nodes.
-        $$\\beta_i = \\beta_{\\text{base}} \\cdot \\exp(-\\gamma \\cdot \\kappa_i^2)$$
+        $$\\beta_i = \\beta_{\\text{base}} \\cdot \\exp(-\\gamma_{damping} \\cdot \\kappa_i^2)$$
         Where $\\kappa_i$ represents the local cell ratio mismatch:
         $$\\kappa_i = \\left|\\frac{dx_i}{dx_{i-1}} - 1.0\\right|$$
         """
@@ -1471,13 +1472,13 @@ class FDTDMesher1D:
             dx_l = dx[i-1]
             dx_r = dx[i]
             kappa = abs((dx_r / dx_l) - 1.0) if dx_l > 1e-12 else 0.0
-            betas[i] = base_damping * math.exp(-stiff_gamma * (kappa ** 2))
+            betas[i] = base_damping * math.exp(-damping_gamma * (kappa ** 2))
         return betas
 
-    def _calculate_stiffness_adjoint_learning_rate(self, mesh: list[float], base_lr: float, stiff_gamma: float) -> list[float]:
+    def _calculate_stiffness_adjoint_learning_rate(self, mesh: list[float], base_lr: float, lr_gamma: float) -> list[float]:
         """
         Computes localized Stiffness-Adjoint step/learning-rate coefficients vector ($\\alpha_i$) for all nodes.
-        $$\\alpha_i = \\alpha_{\\text{base}} \\cdot \\exp(-\\gamma \\cdot \\kappa_i^2)$$
+        $$\\alpha_i = \\alpha_{\\text{base}} \\cdot \\exp(-\\gamma_{lr} \\cdot \\kappa_i^2)$$
         Where $\\kappa_i$ represents the local cell ratio mismatch:
         $$\\kappa_i = \\left|\\frac{dx_i}{dx_{i-1}} - 1.0\\right|$$
         """
@@ -1487,10 +1488,10 @@ class FDTDMesher1D:
             dx_l = dx[i-1]
             dx_r = dx[i]
             kappa = abs((dx_r / dx_l) - 1.0) if dx_l > 1e-12 else 0.0
-            alphas[i] = base_lr * math.exp(-stiff_gamma * (kappa ** 2))
+            alphas[i] = base_lr * math.exp(-lr_gamma * (kappa ** 2))
         return alphas
 
-    def _get_local_coefficients(self, i: int, base_lr: float, base_damping: float, lr_mode: str, damping_mode: str, stiff_gamma: float) -> tuple[float, float]:
+    def _get_local_coefficients(self, i: int, base_lr: float, base_damping: float, lr_mode: str, damping_mode: str, lr_gamma: float, damping_gamma: float) -> tuple[float, float]:
         """
         Computes local learning rate and damping parameters for sequential updates.
         """
@@ -1501,12 +1502,11 @@ class FDTDMesher1D:
             dx_l = self.mesh[i] - self.mesh[i-1]
             dx_r = self.mesh[i+1] - self.mesh[i]
             kappa = abs((dx_r / dx_l) - 1.0) if dx_l > 1e-12 else 0.0
-            scale = math.exp(-stiff_gamma * (kappa ** 2))
 
             if lr_mode == "adjoint":
-                alpha = base_lr * scale
+                alpha = base_lr * math.exp(-lr_gamma * (kappa ** 2))
             if damping_mode == "adjoint":
-                beta = base_damping * scale
+                beta = base_damping * math.exp(-damping_gamma * (kappa ** 2))
 
         return alpha, beta
 
