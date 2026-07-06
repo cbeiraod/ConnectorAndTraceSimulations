@@ -473,6 +473,55 @@ class TestFDTDMesher1DStateless:
         # Node 1 and 3 moved. Node 2 (index 2, position 5.0) stayed completely still.
         assert mesh == pytest.approx([0.0, 3.5, 5.0, 8.5, 10.0])
 
+    def test_apply_local_kinematic_step_standard(self):
+        """Tests standard sequential step: omega scaling works, velocity untouched if no clip."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        velocities = [0.0, 1.0, 0.0]
+
+        # raw_shift = 1.0, omega = 1.5 -> scaled shift = 1.5. Bounds = [-2.0, 2.0].
+        # 1.5 fits perfectly. Velocity should NOT be updated.
+        applied_shift = mesher._apply_local_kinematic_step(
+            mesh, velocities, i=1, raw_shift=1.0, omega=1.5, update_velocity=True
+        )
+
+        assert applied_shift == pytest.approx(1.5)
+        assert mesh == pytest.approx([0.0, 6.5, 10.0])
+        assert velocities[1] == pytest.approx(1.0) # Unmodified!
+
+    def test_apply_local_kinematic_step_inelastic_velocity_sync(self):
+        """Tests that a clipped shift correctly truncates the velocity vector back through omega."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        velocities = [0.0, 4.0, 0.0]
+
+        # raw_shift = 4.0, omega = 2.0 -> scaled shift = 8.0. Bounds = [-2.0, 2.0].
+        # Actual shift is clipped to 2.0.
+        # Velocity sync should divide back by omega: 2.0 / 2.0 = 1.0.
+        applied_shift = mesher._apply_local_kinematic_step(
+            mesh, velocities, i=1, raw_shift=4.0, omega=2.0, update_velocity=True
+        )
+
+        assert applied_shift == pytest.approx(2.0)
+        assert mesh == pytest.approx([0.0, 7.0, 10.0])
+        assert velocities[1] == pytest.approx(1.0) # Correctly synchronized!
+
+    def test_apply_local_kinematic_step_no_velocity(self):
+        """Tests that velocity is not changed when not requested."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        velocities = [0.0, 4.0, 0.0]
+
+        # raw_shift = 4.0, omega = 1.0. Clipped to 2.0.
+        # update_velocity = False ensures momentum is preserved exactly as it was.
+        applied_shift = mesher._apply_local_kinematic_step(
+            mesh, velocities, i=1, raw_shift=4.0, omega=1.0, update_velocity=False
+        )
+
+        assert applied_shift == pytest.approx(2.0)
+        assert mesh == pytest.approx([0.0, 7.0, 10.0])
+        assert velocities[1] == pytest.approx(4.0) # Preserved perfectly!
+
 
 class TestFDTDMesher1DSplitting:
 
