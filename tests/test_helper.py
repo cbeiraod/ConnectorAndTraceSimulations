@@ -597,6 +597,49 @@ class TestFDTDMesher1DStateless:
 
         assert alphas[1] == pytest.approx(0.2)
 
+    def test_get_local_coefficients_uniform_mode(self):
+        """Tests that standard mode bypasses calculations and returns base coefficients."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesher.mesh = [0.0, 1.0, 5.0] # Highly non-uniform! dx_l=1.0, dx_r=4.0
+
+        # Because damping_mode="uniform", it should ignore the mesh geometry.
+        alpha, beta = mesher._get_local_coefficients(
+            i=1, base_lr=0.2, base_damping=0.8, damping_mode="uniform", stiff_gamma=5.0
+        )
+
+        assert alpha == 0.2
+        assert beta == 0.8
+
+    def test_get_local_coefficients_adjoint_mode(self):
+        """Tests adjoint mode correctly scales both coefficients based on local ratio mismatch."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesher.mesh = [0.0, 1.0, 3.0] # dx_l = 1.0, dx_r = 2.0 -> kappa = 1.0
+
+        base_lr = 0.2
+        base_damping = 0.8
+        gamma = 2.0
+
+        alpha, beta = mesher._get_local_coefficients(
+            i=1, base_lr=base_lr, base_damping=base_damping, damping_mode="adjoint", stiff_gamma=gamma
+        )
+
+        expected_scale = math.exp(-gamma * (1.0 ** 2))
+        assert alpha == pytest.approx(base_lr * expected_scale)
+        assert beta == pytest.approx(base_damping * expected_scale)
+
+    def test_get_local_coefficients_adjoint_microscopic(self):
+        """Tests adjoint mode safely handles microscopic left cells."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesher.mesh = [0.0, 1e-13, 2.0] # dx_l = 1e-13
+
+        # Below 1e-12 threshold, kappa = 0.0, returning base scale (1.0)
+        alpha, beta = mesher._get_local_coefficients(
+            i=1, base_lr=0.2, base_damping=0.8, damping_mode="adjoint", stiff_gamma=5.0
+        )
+
+        assert alpha == pytest.approx(0.2)
+        assert beta == pytest.approx(0.8)
+
 
 class TestFDTDMesher1DSplitting:
 
