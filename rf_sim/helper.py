@@ -637,35 +637,212 @@ class FDTDMesher1D:
 
         return self.mesh
 
-    def _iterative_relaxation_jacobi(self, **kwargs) -> list[float]:
-        """
+    def _iterative_relaxation_jacobi(
+        self,
+        update_type: str = "first_order",
+        lr_mode: str = "uniform",
+        damping_mode: str = "uniform",
+        max_iterations: int = 20000,
+        relaxation_factor: float = 0.2,
+        omega: float = 1.0,
+        damping: float = 0.8,
+        lr_gamma: float = 5.0,
+        damping_gamma: float = 5.0,
+        snap_to_optional: bool = True,
+        **kwargs
+    ) -> list[float]:
+        r"""
         Performs simultaneous Jacobi-style physical grid updates.
-        """
-        return self._relax_grid_engine(sweep_strategy="jacobi", **kwargs)
 
-    def _iterative_relaxation_gaussseidel(self, **kwargs) -> list[float]:
+        In a Jacobi sweep, the forces on all nodes are evaluated simultaneously at the
+        current state $x^{(k)}$, and all nodes are displaced to form the new state $x^{(k+1)}$.
+        Because updates are independent, information propagates exactly one cell per iteration.
+
+        The general spatial recurrence relation is:
+        $$ x_i^{(k+1)} = x_i^{(k)} + \omega \cdot \Delta x_i \left( F_i(x_{<i}^{(k)}, x_i^{(k)}, x_{>i}^{(k)}) \right) $$
+
+        Where $\Delta x_i$ is the kinematic step function (First-Order, Momentum, etc.)
+        applied to the local force $F_i$.
         """
+        return self._relax_grid_engine(
+            sweep_strategy="jacobi",
+            update_type=update_type,
+            lr_mode=lr_mode,
+            damping_mode=damping_mode,
+            max_iterations=max_iterations,
+            relaxation_factor=relaxation_factor,
+            omega=omega,
+            damping=damping,
+            lr_gamma=lr_gamma,
+            damping_gamma=damping_gamma,
+            snap_to_optional=snap_to_optional,
+            **kwargs
+        )
+
+    def _iterative_relaxation_gaussseidel(
+        self,
+        update_type: str = "first_order",
+        lr_mode: str = "uniform",
+        damping_mode: str = "uniform",
+        max_iterations: int = 20000,
+        relaxation_factor: float = 0.2,
+        omega: float = 1.0,
+        damping: float = 0.8,
+        lr_gamma: float = 5.0,
+        damping_gamma: float = 5.0,
+        snap_to_optional: bool = True,
+        **kwargs
+    ) -> list[float]:
+        r"""
         Performs sequential, single-direction (left-to-right) Gauss-Seidel physical grid updates.
-        """
-        return self._relax_grid_engine(sweep_strategy="gaussseidel", **kwargs)
 
-    def _iterative_relaxation_alternatinggaussseidel(self, **kwargs) -> list[float]:
+        As the sweep iterates from $i=1$ to $N$, it uses the newly computed positions of
+        the left neighbors ($x_{<i}^{(k+1)}$) immediately. This allows shockwaves to propagate
+        across the entire domain to the right instantly, but creates directional bias.
+
+        The general spatial recurrence relation is:
+        $$ x_i^{(k+1)} = x_i^{(k)} + \omega \cdot \Delta x_i \left( F_i(x_{<i}^{(k+1)}, x_i^{(k)}, x_{>i}^{(k)}) \right) $$
         """
+        return self._relax_grid_engine(
+            sweep_strategy="gaussseidel",
+            update_type=update_type,
+            lr_mode=lr_mode,
+            damping_mode=damping_mode,
+            max_iterations=max_iterations,
+            relaxation_factor=relaxation_factor,
+            omega=omega,
+            damping=damping,
+            lr_gamma=lr_gamma,
+            damping_gamma=damping_gamma,
+            snap_to_optional=snap_to_optional,
+            **kwargs
+        )
+
+    def _iterative_relaxation_alternatinggaussseidel(
+        self,
+        update_type: str = "first_order",
+        lr_mode: str = "uniform",
+        damping_mode: str = "uniform",
+        max_iterations: int = 20000,
+        relaxation_factor: float = 0.2,
+        omega: float = 1.0,
+        damping: float = 0.8,
+        lr_gamma: float = 5.0,
+        damping_gamma: float = 5.0,
+        snap_to_optional: bool = True,
+        **kwargs
+    ) -> list[float]:
+        r"""
         Performs sequential, alternating single-direction Gauss-Seidel physical grid updates.
-        """
-        return self._relax_grid_engine(sweep_strategy="alternatinggaussseidel", **kwargs)
 
-    def _iterative_relaxation_symmetricgaussseidel(self, **kwargs) -> list[float]:
+        To mitigate the directional bias of standard Gauss-Seidel, this strategy flips the
+        traversal array every iteration.
+
+        Even Iterations (Left-to-Right):
+        $$ x_i^{(k+1)} = x_i^{(k)} + \omega \cdot \Delta x_i \left( F_i(x_{<i}^{(k+1)}, x_i^{(k)}, x_{>i}^{(k)}) \right) $$
+
+        Odd Iterations (Right-to-Left):
+        $$ x_i^{(k+1)} = x_i^{(k)} + \omega \cdot \Delta x_i \left( F_i(x_{<i}^{(k)}, x_i^{(k)}, x_{>i}^{(k+1)}) \right) $$
         """
+        # Inject the alternating parameter dynamically into kwargs to trigger the AGS block
+        return self._relax_grid_engine(
+            sweep_strategy="alternatinggaussseidel",
+            update_type=update_type,
+            lr_mode=lr_mode,
+            damping_mode=damping_mode,
+            max_iterations=max_iterations,
+            relaxation_factor=relaxation_factor,
+            omega=omega,
+            damping=damping,
+            lr_gamma=lr_gamma,
+            damping_gamma=damping_gamma,
+            snap_to_optional=snap_to_optional,
+            **kwargs
+        )
+
+    def _iterative_relaxation_symmetricgaussseidel(
+        self,
+        update_type: str = "first_order",
+        lr_mode: str = "uniform",
+        damping_mode: str = "uniform",
+        max_iterations: int = 20000,
+        relaxation_factor: float = 0.2,
+        omega: float = 1.0,
+        damping: float = 0.8,
+        lr_gamma: float = 5.0,
+        damping_gamma: float = 5.0,
+        snap_to_optional: bool = True,
+        **kwargs
+    ) -> list[float]:
+        r"""
         Performs bidirectional (Symmetric) Gauss-Seidel sequential updates.
-        """
-        return self._relax_grid_engine(sweep_strategy="symmetricgaussseidel", **kwargs)
 
-    def _iterative_relaxation_redblack(self, **kwargs) -> list[float]:
+        Unlike Alternating GS (which swaps direction per iteration), true Symmetric GS executes
+        both a forward and backward pass within a single iteration block $k$, forming a perfectly
+        symmetric error matrix preconditioner.
+
+        Forward Half-Step ($k \to k+1/2$):
+        $$ x_i^{(k+1/2)} = x_i^{(k)} + \omega \cdot \Delta x_i \left( F_i(x_{<i}^{(k+1/2)}, x_i^{(k)}, x_{>i}^{(k)}) \right) $$
+
+        Backward Half-Step ($k+1/2 \to k+1$):
+        $$ x_i^{(k+1)} = x_i^{(k+1/2)} + \omega \cdot \Delta x_i \left( F_i(x_{<i}^{(k+1/2)}, x_i^{(k+1/2)}, x_{>i}^{(k+1)}) \right) $$
         """
+        return self._relax_grid_engine(
+            sweep_strategy="symmetricgaussseidel",
+            update_type=update_type,
+            lr_mode=lr_mode,
+            damping_mode=damping_mode,
+            max_iterations=max_iterations,
+            relaxation_factor=relaxation_factor,
+            omega=omega,
+            damping=damping,
+            lr_gamma=lr_gamma,
+            damping_gamma=damping_gamma,
+            snap_to_optional=snap_to_optional,
+            **kwargs
+        )
+
+    def _iterative_relaxation_redblack(
+        self,
+        update_type: str = "first_order",
+        lr_mode: str = "uniform",
+        damping_mode: str = "uniform",
+        max_iterations: int = 20000,
+        relaxation_factor: float = 0.2,
+        omega: float = 1.0,
+        damping: float = 0.8,
+        lr_gamma: float = 5.0,
+        damping_gamma: float = 5.0,
+        snap_to_optional: bool = True,
+        **kwargs
+    ) -> list[float]:
+        r"""
         Performs checkerboard-interleaved Red-Black parallel updates.
+
+        Nodes are divided into independent sets (even indices = Red, odd indices = Black).
+        Since no two Red nodes share an edge, they can be updated simultaneously.
+        The Black nodes are then updated using the new Red positions.
+
+        Red Node Update (even $i$):
+        $$ x_{red}^{(k+1)} = x_{red}^{(k)} + \omega \cdot \Delta x_i \left( F_i(x_{black}^{(k)}) \right) $$
+
+        Black Node Update (odd $i$):
+        $$ x_{black}^{(k+1)} = x_{black}^{(k)} + \omega \cdot \Delta x_i \left( F_i(x_{red}^{(k+1)}) \right) $$
         """
-        return self._relax_grid_engine(sweep_strategy="redblack", **kwargs)
+        return self._relax_grid_engine(
+            sweep_strategy="redblack",
+            update_type=update_type,
+            lr_mode=lr_mode,
+            damping_mode=damping_mode,
+            max_iterations=max_iterations,
+            relaxation_factor=relaxation_factor,
+            omega=omega,
+            damping=damping,
+            lr_gamma=lr_gamma,
+            damping_gamma=damping_gamma,
+            snap_to_optional=snap_to_optional,
+            **kwargs
+        )
 
     def _global_grid_search(self, min_test_cell_ratio: float = 0.6, **kwargs) -> list[float]:
         """
