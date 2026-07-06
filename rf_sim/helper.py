@@ -103,6 +103,8 @@ class FDTDMesher1D:
             return self._iterative_relaxation_jacobi(**kwargs)
         elif algorithm == "iterative_relaxation_gaussseidel":
             return self._iterative_relaxation_gaussseidel(**kwargs)
+        elif algorithm == "iterative_relaxation_alternatinggaussseidel":
+            return self._iterative_relaxation_alternatinggaussseidel(**kwargs)
         elif algorithm == "iterative_relaxation_symmetricgaussseidel":
             return self._iterative_relaxation_symmetricgaussseidel(**kwargs)
         elif algorithm == "iterative_relaxation_redblack":
@@ -643,9 +645,15 @@ class FDTDMesher1D:
 
     def _iterative_relaxation_gaussseidel(self, **kwargs) -> list[float]:
         """
-        Performs sequential, single-direction Gauss-Seidel physical grid updates.
+        Performs sequential, single-direction (left-to-right) Gauss-Seidel physical grid updates.
         """
         return self._relax_grid_engine(sweep_strategy="gaussseidel", **kwargs)
+
+    def _iterative_relaxation_alternatinggaussseidel(self, **kwargs) -> list[float]:
+        """
+        Performs sequential, alternating single-direction Gauss-Seidel physical grid updates.
+        """
+        return self._relax_grid_engine(sweep_strategy="alternatinggaussseidel", **kwargs)
 
     def _iterative_relaxation_symmetricgaussseidel(self, **kwargs) -> list[float]:
         """
@@ -1270,6 +1278,8 @@ class FDTDMesher1D:
                     odd_indices,
                     update_velocity=(update_type != "first_order")
                 ))
+            else:
+                raise RuntimeError(f"Unknown sweep strategy: {sweep_strategy}")
 
 
             # --- Topological Insertion (Stagnation Break) ---
