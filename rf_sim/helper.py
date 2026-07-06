@@ -964,6 +964,7 @@ class FDTDMesher1D:
         Spatial Sweeps (`sweep_strategy`):
         - "jacobi": Simultaneous updates across all nodes.
         - "gaussseidel": Sequential updates using immediate in-place neighbor states.
+        - "alternatinggaussseidel": Same as "gaussseidel" but in alternating directions
         - "symmetricgaussseidel": Sequential forward followed by sequential backward sweeps.
         - "redblack": Alternating simultaneous passes on independent interleaving index sets.
 
@@ -971,7 +972,7 @@ class FDTDMesher1D:
         - "first_order": Update steps based strictly on raw local forces.
         - "momentum": Newton's Second Law with friction history tracking.
         - "nesterov": Accelerated momentum evaluated at a projected coordinate state.
-        - "leapfrog": Symplectic staggered-time discretization conserving Hamiltonian energy.
+        - "leapfrog": Symplectic staggered-time discretization conserving Hamiltonian energy, only for Jacobi `sweep_strategy`.
 
         Local Parameterizations (`damping_mode`):
         - "uniform": Global static learning rates and damping.
@@ -1090,8 +1091,8 @@ class FDTDMesher1D:
             # ----------------------------------------
             # Gauss-Seidel Sweep Strategy (Sequential L2R or Alternating)
             # ----------------------------------------
-            elif sweep_strategy == "gaussseidel":
-                is_alternating = kwargs.get("alternating_gs", False)
+            elif sweep_strategy in ["gaussseidel", "alternatinggaussseidel"]:
+                is_alternating = (sweep_strategy == "alternatinggaussseidel")
                 sweep_indices = range(len(self.mesh) - 2, 0, -1) if (is_alternating and iters % 2 == 0) else range(1, len(self.mesh) - 1)
 
                 for i in sweep_indices:

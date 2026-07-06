@@ -338,6 +338,72 @@ class TestFDTDMesher1DStateless:
         local_force = mesher._calculate_local_node_spring_force(mesh, i=3)
         assert local_force == pytest.approx(0.0, abs=1e-12)
 
+    def test_clip_elastic_steps_no_clipping(self):
+        """Tests that proposed shifts strictly within the safety boundary pass through unchanged."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        # dx_l = 5.0, dx_r = 5.0. Default safety 0.4 -> limits are [-2.0, 2.0]
+        shifts = [0.0, 1.5, 0.0]
+        is_fixed = [True, False, True]
+
+        clipped = mesher._clip_elastic_steps(mesh, shifts, is_fixed)
+        assert clipped == pytest.approx([0.0, 1.5, 0.0])
+
+    def test_clip_elastic_steps_left_and_right_bounds(self):
+        """Tests aggressive shifts correctly truncate against geometrical limits."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 2.0, 8.0, 10.0]
+        # Node 1 (2.0): dx_l = 2.0, dx_r = 6.0 -> limits [-0.8, 2.4]
+        # Node 2 (8.0): dx_l = 6.0, dx_r = 2.0 -> limits [-2.4, 0.8]
+
+        # Propose massive outward shifts
+        shifts = [0.0, -5.0, 5.0, 0.0]
+        is_fixed = [True, False, False, True]
+
+        clipped = mesher._clip_elastic_steps(mesh, shifts, is_fixed)
+
+        # Node 1 should be clipped left to -0.8
+        assert clipped[1] == pytest.approx(-0.8)
+        # Node 2 should be clipped right to 0.8
+        assert clipped[2] == pytest.approx(0.8)
+
+    def test_clip_elastic_steps_respects_fixed_nodes(self):
+        """Tests that nodes flagged as fixed return exactly 0.0 shift, dropping proposed forces."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        shifts = [0.0, 1.0, 0.0]
+        is_fixed = [True, True, True] # Node 1 is an anchor
+
+        clipped = mesher._clip_elastic_steps(mesh, shifts, is_fixed)
+
+        assert clipped[1] == pytest.approx(0.0)
+
+    def test_clip_elastic_steps_custom_safety_factor(self):
+        """Tests the safety factor explicitly tightens movement constraints."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 5.0, 10.0]
+        # dx = 5.0. Override safety_factor to 0.1 -> limits [-0.5, 0.5]
+        shifts = [0.0, 2.0, 0.0]
+        is_fixed = [True, False, True]
+
+        clipped = mesher._clip_elastic_steps(mesh, shifts, is_fixed, safety_factor=0.1)
+        assert clipped[1] == pytest.approx(0.5)
+
+    def test_clip_local_elastic_step(self):
+        """Tests the standalone localized clipping logic used by sequential sweeps."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesh = [0.0, 2.0, 8.0, 10.0]
+        # Node 1 (2.0): dx_l = 2.0, dx_r = 6.0 -> limits [-0.8, 2.4]
+
+        # In-bounds
+        assert mesher._clip_local_elastic_step(mesh, 1, 0.5) == pytest.approx(0.5)
+        # Left boundary violation
+        assert mesher._clip_local_elastic_step(mesh, 1, -1.0) == pytest.approx(-0.8)
+        # Right boundary violation
+        assert mesher._clip_local_elastic_step(mesh, 1, 3.0) == pytest.approx(2.4)
+        # Custom safety factor
+        assert mesher._clip_local_elastic_step(mesh, 1, 3.0, safety_factor=0.5) == pytest.approx(3.0)
+
 
 class TestFDTDMesher1DSplitting:
 
