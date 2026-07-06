@@ -990,6 +990,16 @@ class FDTDMesher1D:
         for i, p in enumerate(combined_pts):
             if any(abs(p - fp) < 1e-9 for fp in self.fixed_points):
                 is_fixed[i] = True
+        # Validation for Leapfrog Physics Requirements
+        if update_type == "leapfrog":
+            if sweep_strategy != "jacobi":
+                raise RuntimeError(f"Leapfrog integration is strictly a simultaneous scheme and cannot be used with sequential sweep strategy: {sweep_strategy}")
+            if abs(omega - 1.0) > 1e-9:
+                raise ValueError("Leapfrog integration strictly couples spatial steps to temporal velocity. 'omega' must be exactly 1.0.")
+            if damping >= 2.0:
+                raise ValueError("For Leapfrog, base damping must be strictly less than 2.0 to maintain numerical stability.")
+            if damping_mode == "adjoint" and not kwargs.get("suppress_leapfrog_warning", False):
+                logger.warning("Leapfrog used with 'adjoint' damping mode. Kinetic Energy Resets will be applied to maintain stability.")
 
         # Initialize velocity buffers for second-order methods
         velocities = [0.0] * len(self.mesh)
@@ -1044,8 +1054,19 @@ class FDTDMesher1D:
 
                         if update_type == "first_order":
                             raw_shifts[i] = alphas[i] * forces[i]
-                        elif update_type in ("momentum", "leapfrog"):
+                        elif update_type == "momentum":
                             velocities[i] = betas[i] * velocities[i] + alphas[i] * forces[i]
+                            raw_shifts[i] = velocities[i]
+                        elif update_type == "leapfrog":
+                            # True Damped Leapfrog (Dynamic Relaxation)
+                            lf_beta = (2.0 - betas[i]) / (2.0 + betas[i])
+                            lf_alpha = (2.0 * alphas[i]) / (2.0 + betas[i])
+                            velocities[i] = lf_beta * velocities[i] + lf_alpha * forces[i]
+
+                            # Adaptive Kinetic Energy Reset (Local velocity truncation)
+                            if damping_mode == "adjoint" and forces[i] * velocities[i] < 0.0:
+                                velocities[i] = 0.0
+
                             raw_shifts[i] = velocities[i]
 
                 max_shift_applied = max(max_shift_applied, self._apply_global_kinematic_step(
@@ -1071,7 +1092,7 @@ class FDTDMesher1D:
                     raw_shift = 0.0
                     if update_type == "first_order":
                         raw_shift = alpha_i * force
-                    elif update_type in ("momentum", "leapfrog"):
+                    elif update_type == "momentum":
                         velocities[i] = beta_i * velocities[i] + alpha_i * force
                         raw_shift = velocities[i]
                     elif update_type == "nesterov":
@@ -1107,7 +1128,7 @@ class FDTDMesher1D:
                     raw_shift = 0.0
                     if update_type == "first_order":
                         raw_shift = alpha_i * force
-                    elif update_type in ("momentum", "leapfrog"):
+                    elif update_type == "momentum":
                         velocities[i] = beta_i * velocities[i] + alpha_i * force
                         raw_shift = velocities[i]
                     elif update_type == "nesterov":
@@ -1139,7 +1160,7 @@ class FDTDMesher1D:
                     raw_shift = 0.0
                     if update_type == "first_order":
                         raw_shift = alpha_i * force
-                    elif update_type in ("momentum", "leapfrog"):
+                    elif update_type == "momentum":
                         velocities[i] = beta_i * velocities[i] + alpha_i * force
                         raw_shift = velocities[i]
                     elif update_type == "nesterov":
@@ -1181,7 +1202,7 @@ class FDTDMesher1D:
 
                     if update_type == "first_order":
                         raw_shifts[i] = alphas[i] * force
-                    elif update_type in ("momentum", "leapfrog"):
+                    elif update_type == "momentum":
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * force
                         raw_shifts[i] = velocities[i]
                     elif update_type == "nesterov":
@@ -1216,7 +1237,7 @@ class FDTDMesher1D:
 
                     if update_type == "first_order":
                         raw_shifts[i] = alphas[i] * force
-                    elif update_type in ("momentum", "leapfrog"):
+                    elif update_type == "momentum":
                         velocities[i] = betas[i] * velocities[i] + alphas[i] * force
                         raw_shifts[i] = velocities[i]
                     elif update_type == "nesterov":
