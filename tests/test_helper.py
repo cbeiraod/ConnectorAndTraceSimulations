@@ -604,7 +604,7 @@ class TestFDTDMesher1DStateless:
 
         # Because damping_mode="uniform", it should ignore the mesh geometry.
         alpha, beta = mesher._get_local_coefficients(
-            i=1, base_lr=0.2, base_damping=0.8, damping_mode="uniform", stiff_gamma=5.0
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="uniform", damping_mode="uniform", stiff_gamma=5.0
         )
 
         assert alpha == 0.2
@@ -620,7 +620,7 @@ class TestFDTDMesher1DStateless:
         gamma = 2.0
 
         alpha, beta = mesher._get_local_coefficients(
-            i=1, base_lr=base_lr, base_damping=base_damping, damping_mode="adjoint", stiff_gamma=gamma
+            i=1, base_lr=base_lr, base_damping=base_damping, lr_mode="adjoint", damping_mode="adjoint", stiff_gamma=gamma
         )
 
         expected_scale = math.exp(-gamma * (1.0 ** 2))
@@ -634,11 +634,30 @@ class TestFDTDMesher1DStateless:
 
         # Below 1e-12 threshold, kappa = 0.0, returning base scale (1.0)
         alpha, beta = mesher._get_local_coefficients(
-            i=1, base_lr=0.2, base_damping=0.8, damping_mode="adjoint", stiff_gamma=5.0
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="adjoint", damping_mode="adjoint", stiff_gamma=5.0
         )
 
         assert alpha == pytest.approx(0.2)
         assert beta == pytest.approx(0.8)
+
+    def test_get_local_coefficients_decoupled_modes(self):
+        """Tests that lr_mode and damping_mode can be scaled independently of each other."""
+        mesher = FDTDMesher1D([0.0, 10.0], [], max_res=2.0, ratio=1.5)
+        mesher.mesh = [0.0, 1.0, 3.0] # kappa = 1.0 (requires scaling)
+
+        # Test 1: Only LR is adjoint
+        alpha1, beta1 = mesher._get_local_coefficients(
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="adjoint", damping_mode="uniform", stiff_gamma=2.0
+        )
+        assert alpha1 < 0.2
+        assert beta1 == 0.8 # Unmodified
+
+        # Test 2: Only Damping is adjoint
+        alpha2, beta2 = mesher._get_local_coefficients(
+            i=1, base_lr=0.2, base_damping=0.8, lr_mode="uniform", damping_mode="adjoint", stiff_gamma=2.0
+        )
+        assert alpha2 == 0.2 # Unmodified
+        assert beta2 < 0.8
 
 
 class TestFDTDMesher1DSplitting:
