@@ -1,4 +1,4 @@
-name: OpenEMS Microstrip Simulation CI
+name: OpenEMS Microstrip Notch Simulation CI
 
 on:
   push:
