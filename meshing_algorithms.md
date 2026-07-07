@@ -64,7 +64,7 @@ Tuning the iterative engine is mathematically analogous to tuning a physical sho
 * **What it is:** A Successive Over-Relaxation (SOR) modifier that scales the calculated coordinate displacement to artificially accelerate or decelerate convergence, primarily utilized in Gauss-Seidel sweeps.
 * **Valid Range:** `[0.5, 1.99]`
 * **Heuristic:**
-  * **$\omega > 1.0$ (Over-relaxation):** Accelerates convergence by anticipating the gradient trend and overstepping. Values between `1.2` and `1.5` will drastically reduce iteration counts in highly graded meshes. Values approaching `1.8` or higher risk chaotic instability.
+  * **$\omega > 1.0$ (Over-relaxation):** Accelerates convergence by anticipating the gradient trend and overstepping, should only be used for `first_order` variants. Values between `1.2` and `1.5` will drastically reduce iteration counts in highly graded meshes. Values approaching `1.8` or higher risk chaotic instability.
   * **$\omega = 1.0$:** Standard operation; no modification to the calculated step.
   * **$\omega < 1.0$ (Under-relaxation):** Artificially reduces the step size. While this increases the number of iterations required to converge, it is highly useful for stabilizing volatile or chaotic mesh configurations that would otherwise diverge under standard step sizes.
 
