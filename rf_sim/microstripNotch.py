@@ -31,14 +31,14 @@ class MicrostripNotchModel(SimulationModel):
         self.add_mesh_lines('y', -msl_width/2-self.third_mesh)
         self.add_mesh_lines('y', [0])
         self.add_mesh_lines('y', msl_width/2+self.third_mesh)
-        self.build_graded_mesh(max_res_x=self.resolution/4, max_res_y=self.resolution/4)
+        self.build_graded_mesh(max_res_x=self.resolution/4, max_res_y=self.resolution/4, custom_mesher=False)
 
         self.add_mesh_lines('x', [-msl_length, msl_length])
         self.add_mesh_lines('y', [-15*msl_width, 15*msl_width+stub_length])
         self.add_mesh_lines('y', (msl_width/2+stub_length)+self.third_mesh)
         self.add_mesh_lines('z', np.linspace(0,substrate_thickness,5))
         self.add_mesh_lines('z', 3000)
-        self.build_graded_mesh(max_res_x=self.resolution, max_res_y=self.resolution, max_res_z=self.resolution)
+        self.build_graded_mesh(max_res_x=self.resolution, max_res_y=self.resolution, max_res_z=self.resolution, custom_mesher=False)
 
 
         # Define Materials
