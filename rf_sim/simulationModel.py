@@ -25,6 +25,7 @@ class SimulationModel:
         # Data State
         self.materials = {}
         self.mesh_lines = {'x': [], 'y': [], 'z': []}
+        self.optional_mesh_lines = {'x': [], 'y': [], 'z': []}
         self.ports = []
 
         # Execution State Trackers
@@ -73,6 +74,16 @@ class SimulationModel:
         elif isinstance(lines, np.ndarray):
             lines = lines.tolist()
         self.mesh_lines[axis].extend(lines)
+
+    def add_optional_mesh_lines(self, axis, lines):
+        """
+        Stores critical coordinates to guarantee they are locked into the grid.
+        """
+        if isinstance(lines, (int, float)):
+            lines = [lines]
+        elif isinstance(lines, np.ndarray):
+            lines = lines.tolist()
+        self.optional_mesh_lines[axis].extend(lines)
 
     def add_mesh_region(self, axis, start, stop, step):
         """
