@@ -9,10 +9,56 @@ FIXED_POINTS = [0.0, 10.0, 10.1]
 OPTIONAL_POINTS = [5.0]
 MAX_RES = 2.0
 RATIO = 1.5
+KWARGS = {}
+
 ALGORITHM = "segment_uniform"
 ALGORITHM = "segment_graded"
 ALGORITHM = "global_grid_search"
+ALGORITHM = "iterative_relaxation_jacobi" # It took 26404 iterations vs historic "iterative_relaxation" 26402
+KWARGS = {
+    "update_type": "first_order",
+    "lr_mode": "uniform",
+    "damping_mode": "uniform",
+    "relaxation_factor": 0.2,
+    "omega": 1.0,
+    "max_iterations": 30000
+}
+ALGORITHM = "iterative_relaxation_alternatinggaussseidel" # It took 11436 iterations vs historic "iterative_relaxation" 11436
+KWARGS = {
+    "update_type": "first_order",
+    "lr_mode": "uniform",
+    "damping_mode": "uniform",
+    "relaxation_factor": 0.3,
+    "omega": 1.0,
+    "max_iterations": 20000
+}
+ALGORITHM = "iterative_relaxation_jacobi" # It took 783 iterations vs historic "iterative_relaxation_momentum" 783
+KWARGS = {
+    "update_type": "momentum",
+    "lr_mode": "uniform",
+    "damping_mode": "uniform",
+    "relaxation_factor": 0.2,
+    "damping": 0.8,
+    "omega": 1.0
+}
+ALGORITHM = "iterative_relaxation_symmetricgaussseidel" # It took 184 iterations
+KWARGS = {
+    "update_type": "momentum",
+    "lr_mode": "uniform",
+    "damping_mode": "uniform",
+    "relaxation_factor": 0.5,
+    "damping": 0.4,
+    "omega": 1.0,
+    "max_iterations": 50000
+}
 #ALGORITHM = "advancing_front"
+#KWARGS = {}
+
+#FIXED_POINTS = [0.0, 0.5, 2.5, 8.5]
+#OPTIONAL_POINTS = [1.75]
+#MAX_RES = 2.0
+#RATIO = 2.0
+#ALGORITHM = "segment_graded"
 
 # =============================================================================
 # ANSI COLOR CODES (For terminal formatting)
@@ -40,7 +86,7 @@ def main():
     # 1. Generate the Mesh
     mesher = FDTDMesher1D(FIXED_POINTS, OPTIONAL_POINTS, MAX_RES, RATIO)
     try:
-        mesh = mesher.generate(algorithm=ALGORITHM)
+        mesh = mesher.generate(algorithm=ALGORITHM, **KWARGS)
     except Exception as e:
         print(f"{C_WARN}Mesher failed with error: {e}{C_RESET}")
         return
