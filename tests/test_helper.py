@@ -1153,7 +1153,10 @@ def mesh_generation_strategy(draw):
         # Fuzz continuous floats between a min and max
         kwargs["relaxation_factor"] = draw(st.floats(min_value=0.01, max_value=0.5))
 
-        kwargs["damping"] = draw(st.floats(min_value=0.1, max_value=1.9))
+        if kwargs["update_type"] == "leapfrog":
+            kwargs["damping"] = draw(st.floats(min_value=0.1, max_value=1.9))
+        else:
+            kwargs["damping"] = draw(st.floats(min_value=0.1, max_value=0.9))
 
         # Fuzzing the gamma decay parameters
         if kwargs["lr_mode"] == "adjoint":
