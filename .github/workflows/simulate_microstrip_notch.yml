@@ -1,4 +1,4 @@
-name: OpenEMS Trace Optimization CI
+name: OpenEMS Microstrip Simulation CI
 
 on:
   push:
