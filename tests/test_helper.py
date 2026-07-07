@@ -1156,7 +1156,7 @@ def mesh_generation_strategy(draw):
         if kwargs["update_type"] == "leapfrog":
             kwargs["damping"] = draw(st.floats(min_value=0.1, max_value=1.9))
         else:
-            kwargs["damping"] = draw(st.floats(min_value=0.1, max_value=0.9))
+            kwargs["damping"] = draw(st.floats(min_value=0.1, max_value=0.99))
 
         # Fuzzing the gamma decay parameters
         if kwargs["lr_mode"] == "adjoint":
