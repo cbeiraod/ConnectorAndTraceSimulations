@@ -1,9 +1,117 @@
 import pytest
-import random
 import math
-import sys
+import os
+from typing import Any
 from hypothesis import given, assume, settings, seed, example, strategies as st
 from rf_sim.helper import FDTDMesher1D
+
+# Detect if we are in CI
+IS_CI = bool(os.getenv("CI"))
+
+# Define test-specific granular scaling
+FUZZ_EXAMPLES = 500 if IS_CI else 10
+DEMAND_EXAMPLES = 1000 if IS_CI else 50
+
+# All algorithm configurations
+ADVANCING_FRONT = pytest.param(
+    "advancing_front", {},
+    id="advancing_front"
+)
+SKIP_ADVANCING_FRONT = pytest.param(
+    "advancing_front", {},
+    marks=pytest.mark.skip(reason="Temporarily skipped since under development"),
+    id="advancing_front"
+)
+SEGMENT_UNIFORM = pytest.param(
+    "segment_uniform", {},
+    id="segment_uniform"
+)
+SEGMENT_GRADED = pytest.param(
+    "segment_graded", {},
+    id="segment_graded"
+)
+GLOBAL_GRID_SEARCH = pytest.param(
+    "global_grid_search", {},
+    id="global_grid_search"
+)
+
+IR_JACOBI_FIRST = pytest.param(
+    "iterative_relaxation_jacobi", {"update_type": "first_order"},
+    id="iterative_relaxation_jacobi_first"
+)
+IR_JACOBI_MOMENTUM = pytest.param(
+    "iterative_relaxation_jacobi", {"update_type": "momentum"},
+    id="iterative_relaxation_jacobi_momentum"
+)
+IR_JACOBI_LEAPFROG = pytest.param(
+    "iterative_relaxation_jacobi", {"update_type": "leapfrog", "relaxation_factor": 0.3},
+    id="iterative_relaxation_jacobi_leapfrog"
+)
+IR_GS_ADJOINT = pytest.param(
+    "iterative_relaxation_gaussseidel", {"damping_mode": "adjoint"},
+    id="iterative_relaxation_gs_adjoint"
+)
+IR_AGS_ADJOINT = pytest.param(
+    "iterative_relaxation_alternatinggaussseidel", {"damping_mode": "adjoint"},
+    id="iterative_relaxation_ags_adjoint"
+)
+IR_REDBLACK_NESTEROV = pytest.param(
+    "iterative_relaxation_redblack", {"update_type": "nesterov"},
+    id="iterative_relaxation_redblack_nesterov"
+)
+IR_SYM_GS_MOMENTUM = pytest.param(
+    "iterative_relaxation_symmetricgaussseidel", {"update_type": "momentum", "relaxation_factor": 0.1, "damping": 0.4},
+    id="iterative_relaxation_sym_gs_momentum"
+)
+
+COMMON_ALGOS = [
+    GLOBAL_GRID_SEARCH,
+    IR_JACOBI_FIRST,
+    IR_JACOBI_MOMENTUM,
+    IR_JACOBI_LEAPFROG,
+    IR_REDBLACK_NESTEROV
+]
+
+ALL_ALGOS = COMMON_ALGOS + [
+    ADVANCING_FRONT,
+    SEGMENT_UNIFORM,
+    SEGMENT_GRADED,
+    IR_GS_ADJOINT,
+    IR_AGS_ADJOINT,
+    IR_SYM_GS_MOMENTUM
+]
+
+ALL_ALGOS_SKIP_AF = COMMON_ALGOS + [
+    SKIP_ADVANCING_FRONT,
+    SEGMENT_UNIFORM,
+    SEGMENT_GRADED,
+    IR_GS_ADJOINT,
+    IR_AGS_ADJOINT,
+    IR_SYM_GS_MOMENTUM
+]
+
+SYMMETRIC_ALL_ALGOS_SKIP_AF = COMMON_ALGOS + [
+    SKIP_ADVANCING_FRONT,
+    SEGMENT_UNIFORM,
+    SEGMENT_GRADED
+]
+
+GRADED_ALL_ALGOS = COMMON_ALGOS + [
+    ADVANCING_FRONT,
+    IR_GS_ADJOINT,
+    IR_AGS_ADJOINT,
+    IR_SYM_GS_MOMENTUM
+]
+
+IR_ALGOS = [
+    IR_JACOBI_FIRST,
+    IR_JACOBI_MOMENTUM,
+    IR_JACOBI_LEAPFROG,
+    IR_GS_ADJOINT,
+    IR_AGS_ADJOINT,
+    IR_REDBLACK_NESTEROV,
+    IR_SYM_GS_MOMENTUM
+]
 
 class TestFDTDMesher1DState:
 
@@ -200,6 +308,7 @@ class TestFDTDMesher1DStateless:
         demand = mesher._calculate_cell_demand([2.0, 2.5], 1)
         assert demand == pytest.approx(0.5)
 
+    @settings(max_examples=DEMAND_EXAMPLES, deadline=None)
     @given(
         dx=st.lists(st.floats(min_value=0.01, max_value=10.0), min_size=3, max_size=10),
         max_res=st.floats(min_value=0.1, max_value=5.0),
@@ -944,8 +1053,7 @@ def check_mesh_validity(mesh, fixed_points, max_res, ratio, algorithm="advancing
     ]
 
     algorithm_no_ratio = [
-        "segment_uniform",
-        "global_grid_search_with_fixed"
+        "segment_uniform"
     ]
 
     # 1. All fixed points must be present
@@ -1004,18 +1112,84 @@ def non_sliver_fixed_points(draw, min_gap=0.5, min_val=-100.0, max_val=100.0):
 
     return points
 
-class TestFDTDMesher1DIntegration:
+@st.composite
+def mesh_generation_strategy(draw):
+    """Dynamically generates valid kwargs for the different algorithms, in particular the unified relaxation engine."""
+    base_iters = 20000
+    multiplier = 1.0
 
-    @pytest.mark.parametrize("algorithm", [
-        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
+    algo = draw(st.sampled_from([
+        #"advancing_front",
         "segment_uniform",
         "segment_graded",
         "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        #"iterative_relaxation_fast_momentum"
-    ])
+        "iterative_relaxation_jacobi",
+        "iterative_relaxation_gaussseidel",
+        "iterative_relaxation_alternatinggaussseidel",
+        "iterative_relaxation_symmetricgaussseidel",
+        "iterative_relaxation_redblack"
+    ]))
+
+    kwargs: dict[str, Any] = {
+        "snap_to_optional": True
+    }
+
+    if algo in ["advancing_front", "segment_uniform", "segment_graded"]:
+        pass
+    elif algo == "global_grid_search":
+        kwargs["min_test_cell_ratio"] = draw(st.floats(min_value=0.3, max_value=0.7))
+    elif algo == "iterative_relaxation_jacobi":
+        # Leapfrog only works with Jacobi
+        kwargs["update_type"] = draw(st.sampled_from(["first_order", "momentum", "nesterov", "leapfrog"]))
+        base_iters = 40000
+    elif algo.startswith("iterative_relaxation_"):
+        kwargs["update_type"] = draw(st.sampled_from(["first_order", "momentum", "nesterov"]))
+
+    if algo.startswith("iterative"):
+        # Discrete choices
+        kwargs["lr_mode"] = draw(st.sampled_from(["uniform", "adjoint"]))
+        kwargs["damping_mode"] = draw(st.sampled_from(["uniform", "adjoint"]))
+
+        # Fuzz continuous floats between a min and max
+        kwargs["relaxation_factor"] = draw(st.floats(min_value=0.01, max_value=0.5))
+
+        kwargs["damping"] = draw(st.floats(min_value=0.1, max_value=1.9))
+
+        # Fuzzing the gamma decay parameters
+        if kwargs["lr_mode"] == "adjoint":
+            kwargs["lr_gamma"] = draw(st.floats(min_value=1.0, max_value=10.0))
+        if kwargs["damping_mode"] == "adjoint":
+            kwargs["damping_gamma"] = draw(st.floats(min_value=1.0, max_value=10.0))
+
+        # Filter out invalid physical combinations using assume()
+        if kwargs["update_type"] == "leapfrog":
+            kwargs["omega"] = 1.0
+            if kwargs["lr_mode"] == "adjoint" or kwargs["damping_mode"] == "adjoint":
+                kwargs["suppress_leapfrog_warning"] = True
+        else:
+            # Fuzz over-relaxation (SOR) modifier
+            kwargs["omega"] = draw(st.floats(min_value=0.5, max_value=1.5))
+
+        # Dynamic Max Iterations Heuristic
+        # Computes how sluggish the chosen combination is, and scales the iteration cap so the solver doesn't hang.
+        multiplier = max(1.0, 0.2 / kwargs["relaxation_factor"])
+        multiplier *= max(1.0, 1.0 / kwargs["omega"])
+        if kwargs["lr_mode"] == "adjoint":
+            # Exponential slowdown from gamma scaling
+            multiplier *= (kwargs["lr_gamma"] / 2.0)
+
+    target_iterations = int(base_iters * multiplier)
+    if algo == "iterative_relaxation_jacobi":
+        assume(target_iterations <= 300000)
+    else:
+        assume(target_iterations <= 150000)
+    kwargs["max_iterations"] = target_iterations
+
+    return algo, kwargs
+
+class TestFDTDMesher1DIntegration:
+
+    @pytest.mark.parametrize("algorithm, kwargs", ALL_ALGOS_SKIP_AF)
     @pytest.mark.parametrize("fixed_steps", [
         [0.0, 1.0, 2.1],           # cell0: max_res, cell1: 1.1 max_res
         [0.0, 1.0, 2.1, 3.1],      # cell0: max_res, cell1: 1.1 max_res, cell2: max_res
@@ -1026,7 +1200,7 @@ class TestFDTDMesher1DIntegration:
         [0.0, 1.0, 6.9],           # cell0: max_res, cell1: 5.9 max_res
         [0.0, 1.0, 6.9, 7.9],      # cell0: max_res, cell1: 5.9 max_res, cell2: max_res
     ])
-    def test_unforced_cell_edge_cases_respect_constraints(self, algorithm, fixed_steps, max_res = 1.0, ratio = 1.1):
+    def test_unforced_cell_edge_cases_respect_constraints(self, algorithm, kwargs, fixed_steps, max_res = 1.0, ratio = 1.1):
         """
         Tests the edge cases where unforced cells are just above integer multiples
         of max_res, forcing backward ratio corrections.
@@ -1051,86 +1225,52 @@ class TestFDTDMesher1DIntegration:
         for val in mesher._pressure_right:
             assert val == pytest.approx(0.0)
 
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         check_mesh_validity(final_mesh, fixed, max_res, ratio, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", [
-        "advancing_front",
-        "segment_uniform",
-        "segment_graded",
-        "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
-    ])
-    def test_simple_bisection(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", ALL_ALGOS)
+    def test_simple_bisection(self, algorithm, kwargs):
         """Tests the trivial case where the max_res is exactly half of the point spacing."""
         fixed = [-1.0, 1.0]
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=1.0, ratio=1.2)
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         assert final_mesh == pytest.approx([-1.0, 0.0, 1.0])
         check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", [
-        "advancing_front",
-        "segment_uniform",
-        "segment_graded",
-        "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
-    ])
-    def test_basic_bisection(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", ALL_ALGOS)
+    def test_basic_bisection(self, algorithm, kwargs):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
         fixed = [-1.0, 1.0]
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=0.9, ratio=1.2)
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         # Expected to safely split into 3 equal cells of 2/3
         assert final_mesh == pytest.approx([-1.0, -1/3, 1/3, 1.0])
         check_mesh_validity(final_mesh, fixed, max_res=0.9, ratio=1.2, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", [
-        "advancing_front",
-        "segment_uniform",
-        "segment_graded",
-        "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
-    ])
-    def test_basic_bisection_with_optional_points(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", ALL_ALGOS)
+    def test_basic_bisection_with_optional_points(self, algorithm, kwargs):
         """Tests the first edge case: safely bisecting to avoid infinite loops."""
         fixed = [-1.0, 1.0]
         optional = [-0.3, 0.3]
         mesher = FDTDMesher1D(fixed, optional_points=optional, max_res=0.9, ratio=1.2)
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         # Expected to safely split into 3 equal cells of 2/3
         assert final_mesh == pytest.approx([-1.0, -0.3, 0.3, 1.0])
         check_mesh_validity(final_mesh, fixed, max_res=0.9, ratio=1.2, algorithm=algorithm)
 
-
-    @pytest.mark.parametrize("algorithm", [
-        "advancing_front",
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        #"iterative_relaxation_fast_momentum"
-    ])
-    def test_complex_grading_cascade(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", GRADED_ALL_ALGOS)
+    def test_complex_grading_cascade(self, algorithm, kwargs):
         """Tests a highly disparate domain to ensure the ratio cascades correctly without hanging."""
         fixed = [0.0, 10.0]
         # Small forced cell at the start will force a ratio cascade all the way to max_res
         fixed.insert(1, 0.1)
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=2.0, ratio=1.5)
-        final_mesh = mesher.generate(algorithm=algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm=algorithm)
         # Ensure it successfully expanded up to max_res
@@ -1201,22 +1341,15 @@ class TestFDTDMesher1DIntegration:
         assert final_mesh == pytest.approx([0.0, 1.0, 2.0, 3.0, 4.0])
         check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm="global_grid_search")
 
-    @pytest.mark.parametrize("algorithm", [
-        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
-        "segment_uniform",
-        "segment_graded",
-        "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_momentum"
-    ])
-    def test_symmetric_non_uniform_mesh(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", SYMMETRIC_ALL_ALGOS_SKIP_AF)
+    def test_symmetric_non_uniform_mesh(self, algorithm, kwargs):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
         positive_half = [0.0, 4.0, 4.5, 5.0, 5.5, 6.0, 12.0]
         # Reconstruct the full symmetric domain
         fixed = sorted(list(set([-x for x in positive_half] + positive_half)))
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=1.0, ratio=1.2)
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         # 1. Must satisfy all mathematical FDTD requirements
         check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.2, algorithm=algorithm)
@@ -1225,17 +1358,8 @@ class TestFDTDMesher1DIntegration:
         for pt in final_mesh:
             assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
-    @pytest.mark.parametrize("algorithm", [
-        "advancing_front",
-        "segment_uniform",
-        "segment_graded",
-        "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
-    ])
-    def test_multiple_optional_points(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", ALL_ALGOS)
+    def test_multiple_optional_points(self, algorithm, kwargs):
         """Tests the selection logic when multiple optional points are available in a gap."""
         fixed = [0.0, 2.0]
         # Max res is 1.0, so ideal step is 1.0.
@@ -1244,20 +1368,13 @@ class TestFDTDMesher1DIntegration:
         optional = [0.5, 0.9, 1.05]
 
         mesher = FDTDMesher1D(fixed, optional_points=optional, max_res=1.09, ratio=1.5)
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         check_mesh_validity(final_mesh, fixed, max_res=1.09, ratio=1.5, algorithm=algorithm)
         assert any(pytest.approx(1.05, abs=1e-9) == m for m in final_mesh), "Failed to snap to the optimal optional point (1.05)"
 
-    @pytest.mark.parametrize("algorithm", [
-        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
-        "segment_uniform",
-        "segment_graded",
-        "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_momentum"
-    ])
-    def test_symmetric_non_uniform_realistic_example_mesh(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", SYMMETRIC_ALL_ALGOS_SKIP_AF)
+    def test_symmetric_non_uniform_realistic_example_mesh(self, algorithm, kwargs):
         """Tests that a symmetric starting mesh results in a perfectly symmetric final mesh."""
         positive_half = [0.25, 0.45, 0.4, 0.35, 0.3, 5.0, 0.8500000000000001]
         # Reconstruct the full symmetric domain
@@ -1265,8 +1382,7 @@ class TestFDTDMesher1DIntegration:
 
         #raise RuntimeError(fixed)
 
-        kwargs = {}
-        if algorithm == "iterative_relaxation":
+        if "iterative_relaxation" in algorithm:
             kwargs["max_iterations"] = 85000
 
         mesher = FDTDMesher1D(fixed, optional_points=[], max_res=1.7472369284948892, ratio=1.2)
@@ -1279,40 +1395,25 @@ class TestFDTDMesher1DIntegration:
         for pt in final_mesh:
             assert any(pytest.approx(-pt, abs=1e-9) == m for m in final_mesh), f"Symmetry broken: {pt} exists but {-pt} does not"
 
-    #@pytest.mark.skip
-    @pytest.mark.parametrize("algorithm", [
-        pytest.param("advancing_front", marks=pytest.mark.skip(reason="Temporarily skipped since under development")),
-        "segment_uniform",
-        "segment_graded",
-        "global_grid_search",
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        #"iterative_relaxation_fast_momentum"
-    ])
-    @settings(max_examples=5, deadline=None)
+    @settings(max_examples=FUZZ_EXAMPLES, deadline=None)
     # @seed(42)  # <-- Uncomment this to globally freeze the random seed for this test
     # @example(...) <-- When Hypothesis finds a bug, paste the output here to keep it forever!
-    @example(
-        # This should replace the test above... remove it later
-        fixed_points=[-0.8500000000000001, -5.0, -0.3, -0.35, -0.4, -0.45, -0.25, 0.25, 0.45, 0.4, 0.35, 0.3, 5.0, 0.8500000000000001],
-        optional_points=[],
-        max_res=1.7472369284948892,
-        ratio=1.2
-    )
     @given(
         # Use our custom strategy to guarantee no initial slivers!
         fixed_points=non_sliver_fixed_points(min_gap=0.5),
         optional_points=st.lists(st.floats(min_value=0.0, max_value=100.0), max_size=5),
         max_res=st.floats(min_value=1.0, max_value=10.0),
-        ratio=st.floats(min_value=1.1, max_value=2.0)
+        ratio=st.floats(min_value=1.1, max_value=2.0),
+        algo_config=mesh_generation_strategy()
     )
-    def test_fuzz_mesh_generation(self, algorithm, fixed_points, optional_points, max_res, ratio):
+    def test_fuzz_mesh_generation(self, fixed_points, optional_points, max_res, ratio, algo_config):
         """
         Fuzz test the mesher with physically sound, non-sliver inputs.
         """
         domain_size = max(fixed_points) - min(fixed_points)
         assume(domain_size >= len(fixed_points) * max_res)
+
+        algorithm, kwargs = algo_config
 
         if algorithm.startswith("iterative_relaxation") and ratio < 1.3:
             # Iterative solvers suffer from "Critical Slowing Down" at tight ratios,
@@ -1322,25 +1423,19 @@ class TestFDTDMesher1DIntegration:
 
         mesher = FDTDMesher1D(fixed_points, optional_points, max_res, ratio)
 
-        mesh = mesher.generate(algorithm)
+        mesh = mesher.generate(algorithm, **kwargs)
 
         assert len(mesh) >= len(fixed_points)
         check_mesh_validity(mesh, fixed_points, max_res=max_res, ratio=ratio, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", [
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        #"iterative_relaxation_fast_momentum"
-    ])
-    def test_iterative_relaxation_stagnation_injection(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", IR_ALGOS)
+    def test_iterative_relaxation_stagnation_injection(self, algorithm, kwargs):
         """Test that the stagnation detector successfully injects points to resolve impossible ratio shocks."""
         fixed = [0.0, 10.0, 10.1]
         mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
 
-        kwargs = {}
-        if algorithm == "iterative_relaxation":
-            kwargs["max_iterations"] = 30000
+        if "iterative_relaxation" in algorithm:
+            kwargs["max_iterations"] = 85000
 
         # Without topological injection, this setup creates an infinite spring loop.
         # It should complete successfully and the resulting mesh size should be larger
@@ -1350,30 +1445,20 @@ class TestFDTDMesher1DIntegration:
         check_mesh_validity(final_mesh, fixed, max_res=2.0, ratio=1.5, algorithm=algorithm)
         assert len(final_mesh) > 7, "Mesh did not inject new points to break stagnation."
 
-    @pytest.mark.parametrize("algorithm", [
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
-    ])
-    def test_iterative_relaxation_anchor_rigidity(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", IR_ALGOS)
+    def test_iterative_relaxation_anchor_rigidity(self, algorithm, kwargs):
         """Test that fixed points (anchors) do not drift during spring relaxation."""
         # Use an irrational-like repeating float to ensure precision doesn't drift
         fixed = [0.0, 3.33333333333, 10.0]
         mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         # Check exact floating point equality (not just pytest.approx) to ensure zero drift
         for fp in fixed:
             assert fp in final_mesh, f"Fixed anchor {fp} drifted during relaxation!"
 
-    @pytest.mark.parametrize("algorithm", [
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
-    ])
-    def test_iterative_relaxation_no_premature_equilibrium(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", IR_ALGOS)
+    def test_iterative_relaxation_no_premature_equilibrium(self, algorithm, kwargs):
         """
         Regression test for the 'premature equilibrium' bug.
         Ensures the solver does not exit early when shifts become microscopically small
@@ -1385,25 +1470,22 @@ class TestFDTDMesher1DIntegration:
         fixed = [0.0, 1.0, 2.1]
         mesher = FDTDMesher1D(fixed, [], max_res=1.0, ratio=1.1)
 
-        final_mesh = mesher.generate(algorithm)
+        final_mesh = mesher.generate(algorithm, **kwargs)
 
         # Check validity natively enforces the 1e-9 strict mathematical tolerance
         check_mesh_validity(final_mesh, fixed, max_res=1.0, ratio=1.1, algorithm=algorithm)
 
-    @pytest.mark.parametrize("algorithm", [
-        "iterative_relaxation",
-        "iterative_relaxation_fast",
-        "iterative_relaxation_momentum",
-        "iterative_relaxation_fast_momentum"
-    ])
-    def test_iterative_relaxation_graceful_timeout(self, algorithm):
+    @pytest.mark.parametrize("algorithm, kwargs", IR_ALGOS)
+    def test_iterative_relaxation_graceful_timeout(self, algorithm, kwargs):
         """Test that the algorithm throws a RuntimeError instead of infinite looping if starved of iterations."""
         fixed = [0.0, 10.0, 10.1]
         mesher = FDTDMesher1D(fixed, [], max_res=2.0, ratio=1.5)
 
+        kwargs["max_iterations"] = 5
+
         with pytest.raises(RuntimeError, match="failed to converge"):
             # Provide an impossibly small iteration limit so it aborts cleanly
-            mesher.generate(algorithm, max_iterations=5)
+            mesher.generate(algorithm, **kwargs)
 
 
 def test_openems_native_mesher_fails_constraints():

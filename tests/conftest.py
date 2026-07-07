@@ -4,7 +4,6 @@ from hypothesis import settings, HealthCheck, Phase
 # Register a "dev" profile for fast, local development (e.g., 10 examples)
 settings.register_profile(
     "dev",
-    max_examples=10,
     # Sometimes fuzzing generation takes a bit if assume() rejects a lot of cases
     suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow]
 )
@@ -12,7 +11,6 @@ settings.register_profile(
 # Register a "ci" profile for deep stress testing in CI pipelines
 settings.register_profile(
     "ci",
-    max_examples=500,
     suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow],
     # We omit Phase.shrink here. If a test fails, it reports the first failure
     # it found immediately without spending 5 minutes trying to simplify it.

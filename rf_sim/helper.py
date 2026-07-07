@@ -947,7 +947,7 @@ class FDTDMesher1D:
 
         if iters >= max_iterations:
             raise RuntimeError(f"{sweep_strategy}_{update_type} failed to converge after {max_iterations} iterations.")
-        logger.warn(f"It took {iters} iterations")
+        logger.info(f"It took {iters} iterations")
 
         # Optional Pass: Snap relaxed points to optional geometry
         if snap_to_optional:
