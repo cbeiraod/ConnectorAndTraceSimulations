@@ -1169,8 +1169,12 @@ def mesh_generation_strategy(draw):
             kwargs["omega"] = 1.0
             if kwargs["lr_mode"] == "adjoint" or kwargs["damping_mode"] == "adjoint":
                 kwargs["suppress_leapfrog_warning"] = True
+        elif kwargs["update_type"] in ["momentum", "nesterov"]:
+            # Over-relaxation (omega > 1.0) combined with momentum causes resonant instability.
+            # We restrict omega to <= 1.0 for second-order methods.
+            kwargs["omega"] = draw(st.floats(min_value=0.5, max_value=1.0))
         else:
-            # Fuzz over-relaxation (SOR) modifier
+            # First-order can safely use over-relaxation (SOR) modifier up to 1.5
             kwargs["omega"] = draw(st.floats(min_value=0.5, max_value=1.5))
 
         # Dynamic Max Iterations Heuristic
