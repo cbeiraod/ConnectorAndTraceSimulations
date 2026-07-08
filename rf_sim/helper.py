@@ -5,6 +5,51 @@ import math
 
 logger = logging.getLogger(__name__)
 
+def calculate_cell_progression(start_size, end_size, max_ratio):
+    """
+    Calculates a geometric progression of cell sizes.
+
+    Parameters:
+    - start_size (float): The length of the first cell.
+    - end_size (float): The length of the final cell.
+    - max_ratio (float): The maximum allowed growth factor between adjacent cells (must be > 1).
+
+    Returns:
+    - dict: A dictionary containing the number of transitions, total cells,
+            actual growth ratio, total length, and a list of all cell sizes.
+    """
+    if max_ratio <= 1.0:
+        raise ValueError("max_ratio must be strictly greater than 1.0")
+
+    if start_size >= end_size:
+        raise ValueError("start_size must be strictly less than end_size")
+
+    # 1. Calculate the minimum number of growth steps needed
+    num_steps = math.ceil(math.log(end_size / start_size) / math.log(max_ratio))
+
+    # 2. Recalculate the exact ratio needed to hit end_size perfectly
+    actual_ratio = (end_size / start_size) ** (1 / num_steps)
+
+    # 3. Total number of cells is the number of transitions (steps) + 1
+    num_cells = num_steps + 1
+
+    # 4. Calculate total length using the geometric series sum formula
+    if actual_ratio == 1.0:
+        total_length = start_size * num_cells
+    else:
+        total_length = start_size * (1 - actual_ratio**num_cells) / (1 - actual_ratio)
+
+    # 5. Generate the lengths of each individual cell
+    cells = [start_size * (actual_ratio ** i) for i in range(num_cells)]
+
+    return {
+        "num_steps": num_steps,
+        "num_cells": num_cells,
+        "actual_ratio": actual_ratio,
+        "total_length": total_length,
+        "cells": cells
+    }
+
 class FDTDMesher1D:
     algorithms = [
         "advancing_front", "segment_uniform", "segment_graded", "global_grid_search",
