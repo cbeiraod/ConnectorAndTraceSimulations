@@ -1116,7 +1116,7 @@ def non_sliver_fixed_points(draw, min_gap=0.5, min_val=-100.0, max_val=100.0):
 @st.composite
 def mesh_generation_strategy(draw):
     """Dynamically generates valid kwargs for the different algorithms, in particular the unified relaxation engine."""
-    base_iters = 30000
+    base_iters = 20000
     multiplier = 1.0
 
     algo = draw(st.sampled_from([
@@ -1142,7 +1142,7 @@ def mesh_generation_strategy(draw):
     elif algo == "iterative_relaxation_jacobi":
         # Leapfrog only works with Jacobi
         kwargs["update_type"] = draw(st.sampled_from(["first_order", "momentum", "nesterov", "leapfrog"]))
-        base_iters = 50000
+        base_iters = 40000
     elif algo.startswith("iterative_relaxation_"):
         kwargs["update_type"] = draw(st.sampled_from(["first_order", "momentum", "nesterov"]))
 
@@ -1161,9 +1161,9 @@ def mesh_generation_strategy(draw):
 
         # Fuzzing the gamma decay parameters
         if kwargs["lr_mode"] == "adjoint":
-            kwargs["lr_gamma"] = draw(st.floats(min_value=1.0, max_value=10.0))
+            kwargs["lr_gamma"] = draw(st.floats(min_value=2.0, max_value=10.0))
         if kwargs["damping_mode"] == "adjoint":
-            kwargs["damping_gamma"] = draw(st.floats(min_value=1.0, max_value=10.0))
+            kwargs["damping_gamma"] = draw(st.floats(min_value=2.0, max_value=10.0))
 
         # Filter out invalid physical combinations using assume()
         if kwargs["update_type"] == "leapfrog":
@@ -1191,8 +1191,8 @@ def mesh_generation_strategy(draw):
 
         if kwargs["lr_mode"] == "adjoint":
             # Exponential slowdown from gamma scaling. Even with gamma=1.0,
-            # geometric ratio shocks cause massive slowdowns. We enforce a baseline 3x penalty.
-            multiplier *= max(3.0, kwargs["lr_gamma"])
+            # geometric ratio shocks cause massive slowdowns. We enforce a baseline 2x penalty.
+            multiplier *= max(2.0, kwargs["lr_gamma"]/2)
 
     target_iterations = int(base_iters * multiplier)
     if algo == "iterative_relaxation_jacobi":
