@@ -730,8 +730,24 @@ class FDTDMesher1D:
         while iters < max_iterations:
             iters += 1
 
-            shrink_demand = [self._calculate_cell_demand(self.dx, j) for j in range(len(self.dx))]
+            if diagnostics:
+                res_violations = []
+                ratio_violations = []
+                shrink_demand = []
+                for j in range(len(self.dx)):
+                    res_v, rat_v = self._calculate_cell_violations(self.dx, j)
+                    res_violations.append(res_v)
+                    ratio_violations.append(rat_v)
+                    shrink_demand.append(res_v + rat_v)
+            else:
+                shrink_demand = [self._calculate_cell_demand(self.dx, j) for j in range(len(self.dx))]
+                res_violations = None
+                ratio_violations = None
+
             max_demand = max(shrink_demand) if shrink_demand else 0.0
+
+            # Store the pre-shift dx so diagnostics accurately aligns cause (demand) with effect (shift)
+            pre_shift_dx = self.dx
 
             # Exit once mathematically inside tolerance
             if max_demand <= 1e-9:
@@ -1002,11 +1018,17 @@ class FDTDMesher1D:
 
                 stagnation_counter = 0
 
-            # Update dx for the next iteration and for accurate post-shift diagnostics
-            self.dx = self._get_cell_sizes()
-
             if diagnostics and (iters == 1 or iters % diagnostic_interval == 0):
-                self._record_diagnostics(iters, max_shift_applied)
+                self._record_diagnostics(
+                    iters=iters,
+                    max_shift_applied=max_shift_applied,
+                    res_violations=res_violations,
+                    ratio_violations=ratio_violations,
+                    curr_demands=shrink_demand
+                )
+
+            # Update dx for the next iteration
+            self.dx = self._get_cell_sizes()
 
         if iters >= max_iterations:
             raise RuntimeError(f"{sweep_strategy}_{update_type} failed to converge after {max_iterations} iterations.")
@@ -1239,18 +1261,15 @@ class FDTDMesher1D:
         with open(filename, "wb") as f:
             pickle.dump(self.diagnostics, f)
 
-    def _record_diagnostics(self, iters: int, max_shift_applied: float):
-        """Records telemetry data for the current iteration."""
-        res_violations = []
-        ratio_violations = []
-
-        for j in range(len(self.dx)):
-            res_v, rat_v = self._calculate_cell_violations(self.dx, j)
-            res_violations.append(res_v)
-            ratio_violations.append(rat_v)
-
-        curr_demands = [rv + rtv for rv, rtv in zip(res_violations, ratio_violations)]
-
+    def _record_diagnostics(
+        self,
+        iters: int,
+        max_shift_applied: float,
+        res_violations: list[float],
+        ratio_violations: list[float],
+        curr_demands: list[float]
+    ):
+        """Records telemetry data for the current iteration using pre-calculated arrays."""
         mean_sz = statistics.mean(self.dx)
         median_sz = statistics.median(self.dx)
         std_sz = statistics.stdev(self.dx) if len(self.dx) > 1 else 0.0
