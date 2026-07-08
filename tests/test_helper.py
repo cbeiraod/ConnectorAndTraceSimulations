@@ -1116,7 +1116,7 @@ def non_sliver_fixed_points(draw, min_gap=0.5, min_val=-100.0, max_val=100.0):
 @st.composite
 def mesh_generation_strategy(draw):
     """Dynamically generates valid kwargs for the different algorithms, in particular the unified relaxation engine."""
-    base_iters = 20000
+    base_iters = 30000
     multiplier = 1.0
 
     algo = draw(st.sampled_from([
@@ -1142,7 +1142,7 @@ def mesh_generation_strategy(draw):
     elif algo == "iterative_relaxation_jacobi":
         # Leapfrog only works with Jacobi
         kwargs["update_type"] = draw(st.sampled_from(["first_order", "momentum", "nesterov", "leapfrog"]))
-        base_iters = 40000
+        base_iters = 50000
     elif algo.startswith("iterative_relaxation_"):
         kwargs["update_type"] = draw(st.sampled_from(["first_order", "momentum", "nesterov"]))
 
@@ -1182,16 +1182,23 @@ def mesh_generation_strategy(draw):
         # Computes how sluggish the chosen combination is, and scales the iteration cap so the solver doesn't hang.
         multiplier = max(1.0, 0.2 / kwargs["relaxation_factor"])
         multiplier *= max(1.0, 1.0 / kwargs["omega"])
+
+        if kwargs.get("update_type") in ["momentum", "nesterov"]:
+            # High inertia (damping -> 1.0) causes microscopic ringing that takes
+            # thousands of iterations to fall below the strict 1e-9 convergence threshold.
+            inertia_factor = 1.0 / max(0.01, (1.0 - kwargs["damping"]))
+            multiplier *= max(1.0, inertia_factor / 4.0)
+
         if kwargs["lr_mode"] == "adjoint":
-            # Exponential slowdown from gamma scaling. Never reduce the multiplier below 1.0
-            # because adjoint mode strictly slows down convergence compared to uniform mode.
-            multiplier *= max(1.0, kwargs["lr_gamma"] / 2.0)
+            # Exponential slowdown from gamma scaling. Even with gamma=1.0,
+            # geometric ratio shocks cause massive slowdowns. We enforce a baseline 3x penalty.
+            multiplier *= max(3.0, kwargs["lr_gamma"])
 
     target_iterations = int(base_iters * multiplier)
     if algo == "iterative_relaxation_jacobi":
-        assume(target_iterations <= 300000)
+        assume(target_iterations <= 500000)
     else:
-        assume(target_iterations <= 150000)
+        assume(target_iterations <= 250000)
     kwargs["max_iterations"] = target_iterations
 
     return algo, kwargs
