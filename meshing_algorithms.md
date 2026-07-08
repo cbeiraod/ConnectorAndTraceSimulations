@@ -73,3 +73,111 @@ Tuning the iterative engine is mathematically analogous to tuning a physical sho
 * **What it is:** The sensitivity of the Adjoint system, dictating how aggressively the mesh alters its physics when it detects a ratio shock.
 * **Valid Range:** `[1.0, 10.0]`
 * **Heuristic:** `5.0` is an excellent default. At $\gamma=5$, a 100% ratio error (e.g., cell $A$ is exactly twice the size of cell $B$) drops the local momentum retention by a factor of $e^{-5} \approx 0.006$, instantly neutralizing the local kinetic energy. A lower value like `2.0` provides a softer safety net, while `10.0` treats even minor ratio violations as concrete walls.
+
+## 5. Standardized Tuning Profiles
+
+When implementing fallback sequences (e.g., for automated `Optuna` loops), the following standardized hyperparameter configurations have been rigorously proven to target specific geometric edge cases.
+
+### 5.1 Red-Black Standard Nesterov (The "Goldilocks" Planar Tune)
+
+* **Target:** X/Y planar axes, symmetric multi-cavity resonators, mild topological shocks (e.g., < 100x).
+* **Performance:** High stability. Often converges in \~200-600 iterations on standard meshes.
+* **Configuration:**
+  ```json
+  {
+      "algorithm": "iterative_relaxation_redblack",
+      "update_type": "nesterov",
+      "lr_mode": "uniform",
+      "damping_mode": "adjoint",
+      "damping": 0.8,
+      "relaxation_factor": 0.2,
+      "max_iterations": 50000
+  }
+  ```
+
+### 5.2 Red-Black Aggressive Nesterov (High-Ratio Shock Resolver)
+
+* **Target:** Z-Axis stackups, massive voids next to microscopic traces (e.g., 500x shocks).
+* **Performance:** Softens the adjoint brakes ($\gamma=2.0$) and lowers node mass to allow nodes to glide smoothly across large distances without freezing prematurely.
+* **Configuration:**
+  ```json
+  {
+      "algorithm": "iterative_relaxation_redblack",
+      "update_type": "nesterov",
+      "lr_mode": "uniform",
+      "damping_mode": "adjoint",
+      "damping": 0.9,
+      "relaxation_factor": 0.35,
+      "damping_gamma": 2.0,
+      "max_iterations": 50000
+  }
+  ```
+
+### 5.3 Red-Black Rigid Boundary Nesterov (Deep Freeze)
+
+* **Target:** Meshes containing mid-sized rigid constraints (like internal fixed PML components) that cause violent ringing, but where point injection is not necessarily the primary bottleneck.
+* **Performance:** Unconditionally kills local step sizes and kinetic energy near boundaries to forcibly settle extreme oscillations.
+* **Configuration:**
+  ```json
+  {
+      "algorithm": "iterative_relaxation_redblack",
+      "update_type": "nesterov",
+      "lr_mode": "adjoint",
+      "damping_mode": "adjoint",
+      "max_iterations": 50000,
+      "relaxation_factor": 0.3,
+      "damping": 0.85,
+      "lr_gamma": 4.0,
+      "damping_gamma": 4.0
+  }
+  ```
+
+### 5.4 SGS SSOR Planar Crawler (The Point-Injection & Sloshing Resolver)
+
+* **Target:** Highly constrained boundaries next to massive voids that *strictly require point injection*.
+* **Performance:** Strips away all inertia to prevent global momentum "sloshing", allowing the stagnation counter to reliably trigger. Uses true symmetric sweeps to prevent asymmetric error clustering. Maximizes gradient descent speed via SOR ($\omega=1.5$).
+* **Configuration:**
+  ```json
+  {
+      "algorithm": "iterative_relaxation_symmetricgaussseidel",
+      "update_type": "first_order",
+      "lr_mode": "uniform",
+      "damping_mode": "uniform",
+      "relaxation_factor": 0.25,
+      "omega": 1.5,
+      "max_iterations": 100000
+  }
+  ```
+
+### 5.5 Red-Black Over-Constrained Momentum (Micro-Cavity Friction)
+
+* **Target:** Highly over-constrained geometries with tight, rigid micro-cavities (often caused by random optimizer generation or excessive manual fixed points).
+* **Performance:** Disables Nesterov's look-ahead (which causes pinball-like bouncing in tiny boxes) in favor of standard momentum, paired with heavy friction ($\beta=0.6$) and strong adjoint brakes.
+* **Configuration:**
+  ```json
+  {
+      "algorithm": "iterative_relaxation_redblack",
+      "update_type": "momentum",
+      "lr_mode": "uniform",
+      "damping_mode": "adjoint",
+      "damping": 0.6,
+      "relaxation_factor": 0.25,
+      "damping_gamma": 4.0,
+      "max_iterations": 50000
+  }
+  ```
+
+### 5.6 Red-Black First-Order Adjoint (The Slow Crawler Ultimate Failsafe)
+
+* **Target:** The final failsafe prior to executing `segment_graded`.
+* **Performance:** Unconditionally stable. Zero inertia, ensuring no ringing, paired with Adjoint learning rates to prevent boundary crossing. Requires massive iteration counts but will slowly brute-force virtually any geometry to equilibrium.
+* **Configuration:**
+  ```json
+  {
+      "algorithm": "iterative_relaxation_redblack",
+      "update_type": "first_order",
+      "lr_mode": "adjoint",
+      "relaxation_factor": 0.2,
+      "max_iterations": 200000
+  }
+  ```
