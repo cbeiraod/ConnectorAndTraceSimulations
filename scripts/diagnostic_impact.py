@@ -1,65 +1,78 @@
 import time
 import matplotlib.pyplot as plt
+import gc
 
 from rf_sim.helper import FDTDMesher1D
 
 def main():
-    # Setup a mathematically challenging geometry that requires a lot of iterations
-    # to resolve (massive ratio shock in the middle of the domain).
+    # Setup a mathematically challenging geometry
     fixed = [0.0, 10.0, 10.1, 20.0]
     max_res = 0.5
     ratio = 1.1
 
-    # We intentionally restrict max_iterations to a fixed number.
-    # This guarantees the solver hits the cap and throws a RuntimeError,
-    # ensuring every single run computes EXACTLY this many iterations for a fair comparison.
-    max_iters = 3000
+    max_iters = 5000  # Increased slightly to give the timer more substance
+    trials = 5        # Number of times to repeat each test
 
     intervals = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000]
     diag_times_per_iter = []
 
-    print(f"Benchmarking FDTDMesher1D Diagnostics Impact (Fixed {max_iters} iterations)")
+    print(f"Benchmarking FDTDMesher1D Diagnostics Impact")
+    print(f"Parameters: {max_iters} iterations | {trials} trials per config")
     print("-" * 65)
 
-    # ---------------------------------------------------------
-    # 1. Measure Baseline (Diagnostics OFF)
-    # ---------------------------------------------------------
-    mesher = FDTDMesher1D(fixed, [], max_res=max_res, ratio=ratio)
-
-    start_time = time.perf_counter()
-    try:
-        mesher.generate("iterative_relaxation_jacobi", max_iterations=max_iters, diagnostics=False)
-    except RuntimeError:
-        pass  # Expected to hit the iteration cap
-    end_time = time.perf_counter()
-
-    baseline_time = end_time - start_time
-    baseline_tpi = (baseline_time / max_iters) * 1e6  # Microseconds per iter
-    print(f"Baseline (Diagnostics OFF): {baseline_time:.4f} s -> {baseline_tpi:.2f} µs/iter")
-
-    # ---------------------------------------------------------
-    # 2. Measure with Diagnostics ON at varying intervals
-    # ---------------------------------------------------------
-    for interval in intervals:
+    def run_benchmark_trial(diagnostics_on: bool, interval: int = 50) -> float:
+        """Runs a single timed trial with GC disabled to prevent random noise."""
         mesher = FDTDMesher1D(fixed, [], max_res=max_res, ratio=ratio)
 
+        gc.disable() # Prevent Python from pausing to clean memory during the timer
         start_time = time.perf_counter()
         try:
             mesher.generate(
                 "iterative_relaxation_jacobi",
                 max_iterations=max_iters,
-                diagnostics=True,
+                diagnostics=diagnostics_on,
                 diagnostic_interval=interval
             )
         except RuntimeError:
             pass
         end_time = time.perf_counter()
+        gc.enable()  # Re-enable immediately after
 
-        run_time = end_time - start_time
-        tpi = (run_time / max_iters) * 1e6 # Microseconds per iter
+        return end_time - start_time
+
+    # ---------------------------------------------------------
+    # 0. CPU Warm-up (Get the processor out of low-power idle states)
+    # ---------------------------------------------------------
+    print("Warming up CPU (Turbo Boost initialization)...")
+    mesher = FDTDMesher1D(fixed, [], max_res=max_res, ratio=ratio)
+    try:
+        mesher.generate("iterative_relaxation_jacobi", max_iterations=2000, diagnostics=False)
+    except RuntimeError:
+        pass
+    print("-" * 65)
+
+    # ---------------------------------------------------------
+    # 1. Measure Baseline (Diagnostics OFF)
+    # ---------------------------------------------------------
+    baseline_trial_times = [run_benchmark_trial(False) for _ in range(trials)]
+
+    # We take the MINIMUM time. The OS/GC can only slow things down, never speed them up.
+    best_baseline_time = min(baseline_trial_times)
+    baseline_tpi = (best_baseline_time / max_iters) * 1e6
+
+    print(f"Baseline (Diagnostics OFF): {best_baseline_time:.4f} s -> {baseline_tpi:.2f} µs/iter (Best of {trials})")
+
+    # ---------------------------------------------------------
+    # 2. Measure with Diagnostics ON at varying intervals
+    # ---------------------------------------------------------
+    for interval in intervals:
+        interval_trial_times = [run_benchmark_trial(True, interval) for _ in range(trials)]
+
+        best_run_time = min(interval_trial_times)
+        tpi = (best_run_time / max_iters) * 1e6
         diag_times_per_iter.append(tpi)
 
-        print(f"Interval {interval:<4d}:             {run_time:.4f} s -> {tpi:.2f} µs/iter")
+        print(f"Interval {interval:<4d}:             {best_run_time:.4f} s -> {tpi:.2f} µs/iter (Best of {trials})")
 
     # ---------------------------------------------------------
     # 3. Plotting the Results
@@ -89,8 +102,9 @@ def main():
     print("Plot saved as 'diagnostic_impact.png'. Displaying plot...")
     plt.show()
 
-    print(intervals)
-    print(diag_times_per_iter)
+    print(f"Baseline: {baseline_tpi}")
+    print(f"Intervals: {intervals}")
+    print(f"Times: {diag_times_per_iter}")
 
 if __name__ == '__main__':
     main()
