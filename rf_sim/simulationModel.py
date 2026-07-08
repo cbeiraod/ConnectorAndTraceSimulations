@@ -167,7 +167,7 @@ class SimulationModel:
         self._mesh_built = True
         logger.debug(f"Applied mesh -> Smooth X:{max_res_x}, Y:{max_res_y}, Z:{max_res_z} mm")
 
-    def _run_custom_mesher_tune(self, axis: str, max_res: float | None, ratio: float, preferred_tune: str | None):
+    def _run_custom_mesher_tune(self, axis: str, max_res: float | None, ratio: float, preferred_tune: dict | None):
         if axis not in ['x', 'y', 'z']:
             raise RuntimeError("Trying to run custom mesher on an axis which doesn't exist")
 
@@ -186,11 +186,16 @@ class SimulationModel:
             try:
                 kwargs = None
                 for tune in custom_mesher_tunes:
-                    if tune['name'] == preferred_tune:
+                    if tune['name'] == preferred_tune["tune"]:
                         kwargs = tune["kwargs"]
+                        if "override" in preferred_tune:
+                            for key in preferred_tune["override"]:
+                                kwargs[key] = preferred_tune["override"][key]
                         break
                 if kwargs is not None:
-                    return mesher.generate(**kwargs)
+                    mesh = mesher.generate(**kwargs)
+                    logger.info(f"Completed Meshing with preferred tune: {preferred_tune}")
+                    return mesh
             except RuntimeError as e:
                 logger.debug(f"Meshing failed with preferred tune: {preferred_tune}. Trying tune list...")
 
@@ -200,7 +205,9 @@ class SimulationModel:
                 continue
 
             try:
-                return mesher.generate(**tune["kwargs"])
+                mesh = mesher.generate(**tune["kwargs"])
+                logger.info(f"Completed Meshing with tune: {tune['name']}")
+                return mesh
             except RuntimeError as e:
                 logger.debug(f"Meshing failed with {tune['name']}. Trying next tune...")
                 continue
@@ -209,7 +216,9 @@ class SimulationModel:
         # It operates in O(N) time and requires zero iterations.
         logger.warning("All iterative solvers failed! Falling back to segment_graded.")
         logger.warning(f"List of fixed edges: {fixed_edges}")
-        return mesher.generate(algorithm="segment_graded")
+        mesh = mesher.generate(algorithm="segment_graded")
+        logger.info(f"Completed Meshing with fallback: segment_graded")
+        return mesh
 
     def run_simulation(self, sim_dir="Sim_Data", show_gui=False, cleanup=True):
         """Writes the XML, optionally shows GUI, and runs the FDTD engine."""
