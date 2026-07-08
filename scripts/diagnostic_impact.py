@@ -1,6 +1,7 @@
 import time
 import matplotlib.pyplot as plt
 import gc
+import statistics
 
 from rf_sim.helper import FDTDMesher1D
 
@@ -11,10 +12,12 @@ def main():
     ratio = 1.1
 
     max_iters = 5000  # Increased slightly to give the timer more substance
-    trials = 5        # Number of times to repeat each test
+    trials = 10       # Increased to 10 for better statistical deviation bounds
 
     intervals = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000]
-    diag_times_per_iter = []
+    diag_min_tpi = []
+    diag_mean_tpi = []
+    diag_stdev_tpi = []
 
     print(f"Benchmarking FDTDMesher1D Diagnostics Impact")
     print(f"Parameters: {max_iters} iterations | {trials} trials per config")
@@ -56,11 +59,14 @@ def main():
     # ---------------------------------------------------------
     baseline_trial_times = [run_benchmark_trial(False) for _ in range(trials)]
 
-    # We take the MINIMUM time. The OS/GC can only slow things down, never speed them up.
-    best_baseline_time = min(baseline_trial_times)
-    baseline_tpi = (best_baseline_time / max_iters) * 1e6
+    # Convert all trial times to microseconds per iteration
+    baseline_tpi_list = [(t / max_iters) * 1e6 for t in baseline_trial_times]
 
-    print(f"Baseline (Diagnostics OFF): {best_baseline_time:.4f} s -> {baseline_tpi:.2f} µs/iter (Best of {trials})")
+    baseline_min = min(baseline_tpi_list)
+    baseline_mean = statistics.mean(baseline_tpi_list)
+    baseline_stdev = statistics.stdev(baseline_tpi_list)
+
+    print(f"Baseline (Diagnostics OFF): Min={baseline_min:.2f} | Mean={baseline_mean:.2f} ± {baseline_stdev:.2f} µs/iter")
 
     # ---------------------------------------------------------
     # 2. Measure with Diagnostics ON at varying intervals
@@ -68,22 +74,36 @@ def main():
     for interval in intervals:
         interval_trial_times = [run_benchmark_trial(True, interval) for _ in range(trials)]
 
-        best_run_time = min(interval_trial_times)
-        tpi = (best_run_time / max_iters) * 1e6
-        diag_times_per_iter.append(tpi)
+        tpi_list = [(t / max_iters) * 1e6 for t in interval_trial_times]
 
-        print(f"Interval {interval:<4d}:             {best_run_time:.4f} s -> {tpi:.2f} µs/iter (Best of {trials})")
+        best_tpi = min(tpi_list)
+        mean_tpi = statistics.mean(tpi_list)
+        stdev_tpi = statistics.stdev(tpi_list)
+
+        diag_min_tpi.append(best_tpi)
+        diag_mean_tpi.append(mean_tpi)
+        diag_stdev_tpi.append(stdev_tpi)
+
+        print(f"Interval {interval:<4d}:             Min={best_tpi:.2f} | Mean={mean_tpi:.2f} ± {stdev_tpi:.2f} µs/iter")
 
     # ---------------------------------------------------------
     # 3. Plotting the Results
     # ---------------------------------------------------------
     plt.figure(figsize=(10, 6))
 
-    # Plot the interval data
-    plt.plot(intervals, diag_times_per_iter, marker='o', linestyle='-', color='#1f77b4', label='Diagnostics ON')
+    # Plot the interval data (Diagnostics ON)
+    plt.plot(intervals, diag_min_tpi, marker='o', linestyle='-', color='#1f77b4', label='Diagnostics Min (Best Trial)')
+    plt.plot(intervals, diag_mean_tpi, marker='s', linestyle='--', color='#ff7f0e', label='Diagnostics Mean')
 
-    # Plot the baseline as a red dotted line
-    plt.axhline(y=baseline_tpi, color='#d62728', linestyle='--', linewidth=2, label='Baseline (Diagnostics OFF)')
+    # Uncertainty band for Diagnostics ON
+    lower_bound = [m - s for m, s in zip(diag_mean_tpi, diag_stdev_tpi)]
+    upper_bound = [m + s for m, s in zip(diag_mean_tpi, diag_stdev_tpi)]
+    plt.fill_between(intervals, lower_bound, upper_bound, color='#ff7f0e', alpha=0.2, label='Diagnostics ±1 StdDev')
+
+    # Plot the baseline (Diagnostics OFF)
+    plt.axhline(y=baseline_min, color='#d62728', linestyle='-', linewidth=2, label='Baseline Min')
+    plt.axhline(y=baseline_mean, color='#d62728', linestyle=':', linewidth=2, label='Baseline Mean')
+    plt.axhspan(baseline_mean - baseline_stdev, baseline_mean + baseline_stdev, color='#d62728', alpha=0.15, label='Baseline ±1 StdDev')
 
     plt.title('Performance Impact of FDTD Solver Telemetry', fontsize=14, pad=15)
     plt.xlabel('Diagnostic Interval (Iterations between samples)', fontsize=12)
@@ -101,10 +121,6 @@ def main():
     print("-" * 65)
     print("Plot saved as 'diagnostic_impact.png'. Displaying plot...")
     plt.show()
-
-    print(f"Baseline: {baseline_tpi}")
-    print(f"Intervals: {intervals}")
-    print(f"Times: {diag_times_per_iter}")
 
 if __name__ == '__main__':
     main()
