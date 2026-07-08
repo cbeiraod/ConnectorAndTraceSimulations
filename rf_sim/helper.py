@@ -2,6 +2,8 @@ from typing import List
 import logging
 import random
 import math
+import statistics
+import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -654,6 +656,8 @@ class FDTDMesher1D:
         lr_gamma: float = 5.0,
         damping_gamma: float = 5.0,
         snap_to_optional: bool = True,
+        diagnostics: bool = False,
+        diagnostic_interval: int = 50,
         **kwargs
     ) -> list[float]:
         r"""
@@ -676,6 +680,14 @@ class FDTDMesher1D:
         - "uniform": Global static learning rates and damping.
         - "adjoint": Curvature-dependent Stiffness-Adjoint scaling for damping or step sizes.
         """
+        if diagnostics:
+            self.diagnostics = {
+                "iterations": [], "cell_count": [], "max_shift": [], "max_demand": [],
+                "total_demand": [], "max_res_violation": [], "total_res_violation": [],
+                "max_ratio_violation": [], "total_ratio_violation": [],
+                "mean_cell_size": [], "median_cell_size": [], "stddev_cell_size": []
+            }
+
         # 1. Initialize coordinate array and Tag Anchors
         base_mesh = self._global_grid_search(**kwargs)
         combined_pts = base_mesh.copy()
@@ -990,6 +1002,9 @@ class FDTDMesher1D:
 
                 stagnation_counter = 0
 
+            if diagnostics and (iters == 1 or iters % diagnostic_interval == 0):
+                self._record_diagnostics(iters, max_shift_applied)
+
         if iters >= max_iterations:
             raise RuntimeError(f"{sweep_strategy}_{update_type} failed to converge after {max_iterations} iterations.")
         logger.info(f"It took {iters} iterations")
@@ -1023,6 +1038,23 @@ class FDTDMesher1D:
     # Stateless Physical Operators
     # ============================
 
+    def _calculate_cell_violations(self, dx: list[float], idx: int) -> tuple[float, float]:
+        """
+        Isolates the max_res violation and ratio violation for a specific cell.
+        Returns a tuple of (res_violation, ratio_violation).
+        """
+        res_violation = 0.0
+        ratio_violation = 0.0
+
+        if dx[idx] > self.max_res:
+            res_violation += (dx[idx] - self.max_res)
+        if idx > 0 and dx[idx] > dx[idx-1] * self.ratio:
+            ratio_violation += (dx[idx] - dx[idx-1] * self.ratio)
+        if idx < len(dx) - 1 and dx[idx] > dx[idx+1] * self.ratio:
+            ratio_violation += (dx[idx] - dx[idx+1] * self.ratio)
+
+        return res_violation, ratio_violation
+
     def _calculate_cell_demand(self, dx: list[float], idx: int) -> float:
         r"""
         Calculates the stress (shrink demand) for cell `idx` given cell sizes `dx`.
@@ -1037,14 +1069,8 @@ class FDTDMesher1D:
         - Total demand:
           $$D = D_{\text{res}} + D_{\text{left}} + D_{\text{right}}$$
         """
-        demand = 0.0
-        if dx[idx] > self.max_res:
-            demand += (dx[idx] - self.max_res)
-        if idx > 0 and dx[idx] > dx[idx-1] * self.ratio:
-            demand += (dx[idx] - dx[idx-1] * self.ratio)
-        if idx < len(dx) - 1 and dx[idx] > dx[idx+1] * self.ratio:
-            demand += (dx[idx] - dx[idx+1] * self.ratio)
-        return demand
+        res_v, rat_v = self._calculate_cell_violations(dx, idx)
+        return res_v + rat_v
 
     def _calculate_node_spring_forces(self, mesh: list[float]) -> list[float]:
         """
@@ -1201,6 +1227,44 @@ class FDTDMesher1D:
     # ========================
     # State Inspection Methods
     # ========================
+
+    def dump_diagnostics(self, filename: str = "mesher_stats.pkl"):
+        """Exports the failure telemetry for offline plotting."""
+        if getattr(self, 'diagnostics', None) is None:
+            logger.warning("No diagnostics to dump. Ensure you ran generate() with diagnostics=True.")
+            return
+        with open(filename, "wb") as f:
+            pickle.dump(self.diagnostics, f)
+
+    def _record_diagnostics(self, iters: int, max_shift_applied: float):
+        """Records telemetry data for the current iteration."""
+        current_dx = self._get_cell_sizes()
+        res_violations = []
+        ratio_violations = []
+
+        for j in range(len(current_dx)):
+            res_v, rat_v = self._calculate_cell_violations(current_dx, j)
+            res_violations.append(res_v)
+            ratio_violations.append(rat_v)
+
+        curr_demands = [rv + rtv for rv, rtv in zip(res_violations, ratio_violations)]
+
+        mean_sz = statistics.mean(current_dx)
+        median_sz = statistics.median(current_dx)
+        std_sz = statistics.stdev(current_dx) if len(current_dx) > 1 else 0.0
+
+        self.diagnostics["iterations"].append(iters)
+        self.diagnostics["cell_count"].append(len(current_dx))
+        self.diagnostics["max_shift"].append(max_shift_applied)
+        self.diagnostics["max_demand"].append(max(curr_demands) if curr_demands else 0.0)
+        self.diagnostics["total_demand"].append(sum(curr_demands))
+        self.diagnostics["max_res_violation"].append(max(res_violations) if res_violations else 0.0)
+        self.diagnostics["total_res_violation"].append(sum(res_violations))
+        self.diagnostics["max_ratio_violation"].append(max(ratio_violations) if ratio_violations else 0.0)
+        self.diagnostics["total_ratio_violation"].append(sum(ratio_violations))
+        self.diagnostics["mean_cell_size"].append(mean_sz)
+        self.diagnostics["median_cell_size"].append(median_sz)
+        self.diagnostics["stddev_cell_size"].append(std_sz)
 
     def _get_cell_sizes(self) -> list[float]:
         """Returns the sizes of all current cells in the mesh."""
