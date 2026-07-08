@@ -1183,8 +1183,9 @@ def mesh_generation_strategy(draw):
         multiplier = max(1.0, 0.2 / kwargs["relaxation_factor"])
         multiplier *= max(1.0, 1.0 / kwargs["omega"])
         if kwargs["lr_mode"] == "adjoint":
-            # Exponential slowdown from gamma scaling
-            multiplier *= (kwargs["lr_gamma"] / 2.0)
+            # Exponential slowdown from gamma scaling. Never reduce the multiplier below 1.0
+            # because adjoint mode strictly slows down convergence compared to uniform mode.
+            multiplier *= max(1.0, kwargs["lr_gamma"] / 2.0)
 
     target_iterations = int(base_iters * multiplier)
     if algo == "iterative_relaxation_jacobi":
