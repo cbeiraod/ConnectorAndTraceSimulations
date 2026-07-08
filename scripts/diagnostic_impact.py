@@ -1,8 +1,9 @@
 import time
 import matplotlib.pyplot as plt
+
 from rf_sim.helper import FDTDMesher1D
 
-def run_benchmark():
+def main():
     # Setup a mathematically challenging geometry that requires a lot of iterations
     # to resolve (massive ratio shock in the middle of the domain).
     fixed = [0.0, 10.0, 10.1, 20.0]
@@ -88,5 +89,8 @@ def run_benchmark():
     print("Plot saved as 'diagnostic_impact.png'. Displaying plot...")
     plt.show()
 
-if __name__ == "__main__":
-    run_benchmark()
+    print(intervals)
+    print(diag_times_per_iter)
+
+if __name__ == '__main__':
+    main()
