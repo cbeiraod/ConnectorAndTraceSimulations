@@ -726,10 +726,10 @@ class FDTDMesher1D:
         iters = 0
         stagnation_counter = 0
 
+        self.dx = self._get_cell_sizes()
         while iters < max_iterations:
             iters += 1
 
-            self.dx = self._get_cell_sizes()
             shrink_demand = [self._calculate_cell_demand(self.dx, j) for j in range(len(self.dx))]
             max_demand = max(shrink_demand) if shrink_demand else 0.0
 
@@ -1002,6 +1002,9 @@ class FDTDMesher1D:
 
                 stagnation_counter = 0
 
+            # Update dx for the next iteration and for accurate post-shift diagnostics
+            self.dx = self._get_cell_sizes()
+
             if diagnostics and (iters == 1 or iters % diagnostic_interval == 0):
                 self._record_diagnostics(iters, max_shift_applied)
 
@@ -1238,23 +1241,22 @@ class FDTDMesher1D:
 
     def _record_diagnostics(self, iters: int, max_shift_applied: float):
         """Records telemetry data for the current iteration."""
-        current_dx = self._get_cell_sizes()
         res_violations = []
         ratio_violations = []
 
-        for j in range(len(current_dx)):
-            res_v, rat_v = self._calculate_cell_violations(current_dx, j)
+        for j in range(len(self.dx)):
+            res_v, rat_v = self._calculate_cell_violations(self.dx, j)
             res_violations.append(res_v)
             ratio_violations.append(rat_v)
 
         curr_demands = [rv + rtv for rv, rtv in zip(res_violations, ratio_violations)]
 
-        mean_sz = statistics.mean(current_dx)
-        median_sz = statistics.median(current_dx)
-        std_sz = statistics.stdev(current_dx) if len(current_dx) > 1 else 0.0
+        mean_sz = statistics.mean(self.dx)
+        median_sz = statistics.median(self.dx)
+        std_sz = statistics.stdev(self.dx) if len(self.dx) > 1 else 0.0
 
         self.diagnostics["iterations"].append(iters)
-        self.diagnostics["cell_count"].append(len(current_dx))
+        self.diagnostics["cell_count"].append(len(self.dx))
         self.diagnostics["max_shift"].append(max_shift_applied)
         self.diagnostics["max_demand"].append(max(curr_demands) if curr_demands else 0.0)
         self.diagnostics["total_demand"].append(sum(curr_demands))
