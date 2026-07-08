@@ -1231,7 +1231,7 @@ class FDTDMesher1D:
     def dump_diagnostics(self, filename: str = "mesher_stats.pkl"):
         """Exports the failure telemetry for offline plotting."""
         if getattr(self, 'diagnostics', None) is None:
-            logger.warning("No diagnostics to dump. Ensure you ran generate() with diagnostics=True.")
+            logger.warning("No diagnostics to dump. Ensure you ran generate() with diagnostics=True and the algorithm actually generates diagnostics.")
             return
         with open(filename, "wb") as f:
             pickle.dump(self.diagnostics, f)
