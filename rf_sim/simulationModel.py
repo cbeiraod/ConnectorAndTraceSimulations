@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 custom_mesher_tunes = [
     {
-        "name": "Red-Black Standard Nesterov", # (Mild Shocks / X & Y Axes)
+        "name": "Red-Black Standard Nesterov",
         "kwargs": {
             "algorithm": "iterative_relaxation_redblack",
             "update_type": "nesterov",
@@ -21,7 +21,7 @@ custom_mesher_tunes = [
         }
     },
     {
-        "name": "Red-Black Aggressive Nesterov", # (High-Ratio Shocks / Z-Axis)
+        "name": "Red-Black Aggressive Nesterov",
         "kwargs": {
             "algorithm": "iterative_relaxation_redblack",
             "update_type": "nesterov",
@@ -29,19 +29,58 @@ custom_mesher_tunes = [
             "damping_mode": "adjoint",
             "damping": 0.9,
             "relaxation_factor": 0.35,
-            "damping_gamma": 2.0,       # Softens the brakes to allow sliding across massive voids
-            "max_iterations": 100000    # Gives it room to crawl if necessary
+            "damping_gamma": 2.0,
+            "max_iterations": 50000
         }
     },
     {
-        "name": "Red-Black First-Order Adjoint", # (The Slow Crawler)
+        "name": "Red-Black Rigid Boundary Nesterov",
+        "kwargs": {
+            'algorithm': "iterative_relaxation_redblack",
+            'update_type': "nesterov",
+            'lr_mode': "adjoint",
+            'damping_mode': "adjoint",
+            'max_iterations': 50000,
+            'relaxation_factor': 0.3,
+            'damping': 0.85,
+            'lr_gamma': 4.0,
+            'damping_gamma': 4.0
+        }
+    },
+    {
+        'name': "SGS SSOR Planar Crawler",
+        'kwargs': {
+            'algorithm': "iterative_relaxation_symmetricgaussseidel",
+            'update_type': "first_order",
+            'lr_mode': "uniform",
+            'damping_mode': "uniform",
+            'relaxation_factor': 0.25,
+            'omega': 1.5,
+            'max_iterations': 100000
+        }
+    },
+    {
+        "name": "Red-Black Over-Constrained Momentum",
+        "kwargs": {
+            'algorithm': "iterative_relaxation_redblack",
+            'update_type': "momentum",
+            'lr_mode': "uniform",
+            'damping_mode': "adjoint",
+            'damping': 0.6,
+            'relaxation_factor': 0.25,
+            'damping_gamma': 4.0,
+            'max_iterations': 50000
+        }
+    },
+    {
+        "name": "Red-Black First-Order Adjoint",
         "kwargs": {
             "algorithm": "iterative_relaxation_redblack",
             "update_type": "first_order",
-            "lr_mode": "adjoint",       # Exponentially freeze both LR and Damping
+            "lr_mode": "adjoint",
             "relaxation_factor": 0.2,
             # No momentum, so no ringing. Guaranteed stability, but needs huge iteration counts
-            "max_iterations": 100000
+            "max_iterations": 200000
         }
     }
 ]
