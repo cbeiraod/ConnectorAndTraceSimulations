@@ -1,6 +1,7 @@
 import pytest
 import math
 import os
+import pickle
 from typing import Any
 from hypothesis import given, assume, settings, seed, example, strategies as st
 from rf_sim.helper import FDTDMesher1D
@@ -1516,3 +1517,96 @@ def test_openems_native_mesher_fails_constraints():
     # (usually a grading ratio violation when cascading across highly variable gaps).
     with pytest.raises(AssertionError):
         check_mesh_validity(openems_mesh, fixed, max_res=1.7472369284948892, ratio=1.2)
+
+
+class TestFDTDMesher1DDiagnostics:
+    """Tests the telemetry and diagnostics output for the iterative relaxation solver."""
+
+    def test_diagnostics_disabled_by_default(self):
+        """Ensures no performance overhead or memory allocation when diagnostics=False (default)."""
+        mesher = FDTDMesher1D([0.0, 10.0, 10.1], [], max_res=2.0, ratio=1.5)
+        # Using a tough geometric layout so it takes iterations to solve
+        with pytest.raises(RuntimeError, match="failed to converge"):
+            mesher.generate("iterative_relaxation_jacobi", max_iterations=50)
+
+        # Diagnostics should either not exist, or be explicitly None/empty
+        assert not getattr(mesher, 'diagnostics', False)
+
+    def test_diagnostics_initialization_and_population(self):
+        """Tests that the dictionary is properly formed and populated when diagnostics=True."""
+        mesher = FDTDMesher1D([0.0, 10.0, 10.1], [], max_res=2.0, ratio=1.5)
+        with pytest.raises(RuntimeError, match="failed to converge"):
+            mesher.generate("iterative_relaxation_jacobi", max_iterations=150, diagnostics=True)
+
+        assert hasattr(mesher, 'diagnostics')
+        assert isinstance(mesher.diagnostics, dict)
+
+        expected_keys = [
+            "iterations", "cell_count", "max_shift", "max_demand", "total_demand",
+            "max_res_violation", "total_res_violation", "max_ratio_violation",
+            "total_ratio_violation", "mean_cell_size", "median_cell_size", "stddev_cell_size"
+        ]
+
+        for key in expected_keys:
+            assert key in mesher.diagnostics, f"Missing diagnostic key: {key}"
+            assert len(mesher.diagnostics[key]) > 0, f"Diagnostic list for {key} is empty"
+
+        # Ensure all telemetry arrays synced properly and have the exact same length
+        lengths = [len(mesher.diagnostics[k]) for k in expected_keys]
+        assert len(set(lengths)) == 1, f"Diagnostic arrays have mismatched lengths: {lengths}"
+
+    def test_diagnostics_interval(self):
+        """Tests that diagnostic_interval=N samples at the correct frequency."""
+        mesher = FDTDMesher1D([0.0, 10.0, 10.1], [], max_res=2.0, ratio=1.5)
+        # 200 iterations, sampled every 50 -> we expect ~4 data points (maybe 5 if it samples the start/end)
+        with pytest.raises(RuntimeError, match="failed to converge"):
+            mesher.generate("iterative_relaxation_jacobi", max_iterations=200, diagnostics=True, diagnostic_interval=50)
+
+        num_samples = len(mesher.diagnostics["iterations"])
+        assert 3 <= num_samples <= 6, f"Expected ~4 samples for interval 50 over 200 iterations, got {num_samples}."
+
+    def test_diagnostics_mathematical_sanity(self):
+        """Tests basic physical logic constraints on the telemetry arrays."""
+        mesher = FDTDMesher1D([0.0, 10.0, 10.1], [], max_res=2.0, ratio=1.5)
+        with pytest.raises(RuntimeError, match="failed to converge"):
+            mesher.generate("iterative_relaxation_jacobi", max_iterations=150, diagnostics=True)
+
+        d = mesher.diagnostics
+
+        for i in range(len(d["iterations"])):
+            assert d["iterations"][i] > 0
+            assert d["cell_count"][i] > 0
+            assert d["max_shift"][i] >= 0.0
+            assert d["max_demand"][i] >= 0.0
+
+            # L1 Norm (Total) must be >= L-infinity Norm (Max)
+            assert d["total_demand"][i] >= d["max_demand"][i]
+            assert d["total_res_violation"][i] >= d["max_res_violation"][i]
+            assert d["total_ratio_violation"][i] >= d["max_ratio_violation"][i]
+
+            # Statistical properties
+            assert d["mean_cell_size"][i] > 0.0
+            assert d["median_cell_size"][i] > 0.0
+            assert d["stddev_cell_size"][i] >= 0.0
+
+        # Verify iterations are strictly monotonically increasing
+        assert d["iterations"] == sorted(d["iterations"]), "Iteration X-axis is not sorted monotonically!"
+        assert len(set(d["iterations"])) == len(d["iterations"]), "Iteration X-axis contains duplicate entries!"
+
+    def test_diagnostics_dump(self, tmp_path):
+        """Tests exporting the telemetry to a pickle file and validating the integrity."""
+        mesher = FDTDMesher1D([0.0, 10.0, 10.1], [], max_res=2.0, ratio=1.5)
+        with pytest.raises(RuntimeError, match="failed to converge"):
+            mesher.generate("iterative_relaxation_jacobi", max_iterations=150, diagnostics=True)
+
+        filepath = tmp_path / "test_mesher_stats.pkl"
+
+        # Test the new dump_diagnostics method
+        mesher.dump_diagnostics(filepath)
+
+        assert filepath.exists(), "Dump file was not created!"
+
+        with open(filepath, "rb") as f:
+            loaded_data = pickle.load(f)
+
+        assert loaded_data == mesher.diagnostics, "Pickled data does not match the in-memory dictionary!"
